@@ -1,0 +1,10 @@
+await import("./test-effective-cogs.mjs");
+await import("./test-settlement-period-allocator.mjs");
+await import("./test-settlement-commission-allocation.mjs");
+await import("./test-pnl-source-selection.mjs");
+await import("./test-pnl-engine.mjs");
+await import("./test-daily-pnl-service.mjs");
+await import("./test-ad-spend-import.mjs");
+await import("./test-walmart-settlement-import.mjs");
+await import("./test-sku-pnl-page.mjs");
+await import("./test-parent-pnl-page.mjs");

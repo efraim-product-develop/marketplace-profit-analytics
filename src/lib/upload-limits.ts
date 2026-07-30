@@ -1,0 +1,2 @@
+export const AD_SPEND_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
+export const AD_SPEND_UPLOAD_MAX_LABEL = "20 MB";

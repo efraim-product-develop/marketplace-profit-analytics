@@ -1,0 +1,456 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum ConnectionStatus {
+  DRAFT
+  CONNECTED
+  DISABLED
+  ERROR
+}
+
+enum ImportStatus {
+  PENDING
+  IMPORTED
+  NEEDS_REVIEW
+  FAILED
+}
+
+enum CostRecordStatus {
+  ACTIVE
+  NEEDS_REVIEW
+  IGNORED
+}
+
+enum CostMethod {
+  LATEST_EFFECTIVE_DATE
+  WEIGHTED_AVERAGE
+}
+
+model Organization {
+  id                     String                  @id @default(cuid())
+  name                   String
+  slug                   String                  @unique
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  settings               OrganizationSettings?
+  connections            MarketplaceConnection[]
+  products               Product[]
+  listings               Listing[]
+  costUploads            CostUpload[]
+  cogsBatches            CogsBatch[]
+  costRecords            CostRecord[]
+  importRuns             ImportRun[]
+  salesImports           SalesImport[]
+  salesOrders            SalesOrder[]
+  salesOrderItems        SalesOrderItem[]
+  marketplaceFees        MarketplaceFee[]
+  refunds                Refund[]
+  advertisingCosts       AdvertisingCost[]
+  marketplaceDailyTotals MarketplaceDailyTotal[]
+}
+
+model OrganizationSettings {
+  id                  String       @id @default(cuid())
+  organizationId      String       @unique
+  defaultCurrency     String       @default("USD")
+  timeZone            String       @default("America/New_York")
+  defaultMarketplace  String?
+  inventoryCostMethod CostMethod   @default(LATEST_EFFECTIVE_DATE)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model MarketplaceConnection {
+  id                String           @id @default(cuid())
+  organizationId    String
+  marketplace       String
+  displayName       String
+  externalAccountId String?
+  status            ConnectionStatus @default(DRAFT)
+  syncMode          String           @default("manual")
+  credentialsRef    String?
+  metadata          Json?
+  lastSyncedAt      DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, marketplace, displayName])
+  @@index([organizationId, marketplace])
+}
+
+model Product {
+  id             String           @id @default(cuid())
+  organizationId String
+  internalSku    String?
+  parentSku      String?
+  title          String?
+  brand          String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  listings       Listing[]
+  costRecords    CostRecord[]
+  orderItems     SalesOrderItem[]
+
+  @@unique([organizationId, internalSku])
+  @@index([organizationId, parentSku])
+}
+
+model Listing {
+  id                 String           @id @default(cuid())
+  organizationId     String
+  productId          String?
+  marketplace        String
+  sellerSku          String
+  parentSku          String?
+  marketplaceItemId  String?
+  title              String?
+  status             String?
+  fulfillmentChannel String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product            Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
+  costRecords        CostRecord[]
+  orderItems         SalesOrderItem[]
+
+  @@unique([organizationId, marketplace, sellerSku])
+  @@index([organizationId, marketplace, parentSku])
+}
+
+model CostUpload {
+  id               String            @id @default(cuid())
+  organizationId   String
+  marketplace      String?
+  source           String            @default("excel")
+  originalFileName String
+  status           ImportStatus      @default(PENDING)
+  rowCount         Int               @default(0)
+  importedCount    Int               @default(0)
+  rejectedCount    Int               @default(0)
+  createdAt        DateTime          @default(now())
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  batches          CogsBatch[]
+  records          CostRecord[]
+  issues           CostUploadIssue[]
+
+  @@index([organizationId, marketplace, createdAt])
+}
+
+model CostUploadIssue {
+  id             String     @id @default(cuid())
+  organizationId String
+  uploadId       String
+  rowNumber      Int
+  severity       String     @default("error")
+  code           String
+  message        String
+  rawData        Json?
+  createdAt      DateTime   @default(now())
+  upload         CostUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, uploadId])
+}
+
+model CogsBatch {
+  id             String       @id @default(cuid())
+  organizationId String
+  uploadId       String?
+  marketplace    String
+  shipmentId     String
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  upload         CostUpload?  @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  records        CostRecord[]
+
+  @@unique([organizationId, marketplace, shipmentId])
+  @@index([organizationId, marketplace])
+}
+
+model CostRecord {
+  id                    String           @id @default(cuid())
+  organizationId        String
+  uploadId              String?
+  batchId               String?
+  productId             String?
+  listingId             String?
+  marketplace           String?
+  sellerSku             String
+  parentSku             String?
+  shipmentId            String?
+  productName           String?
+  variationName         String?
+  unitCost              Decimal          @db.Decimal(14, 4)
+  unitCogs              Decimal          @default(0) @db.Decimal(14, 4)
+  inboundFreightPerUnit Decimal          @default(0) @db.Decimal(14, 4)
+  prepCostPerUnit       Decimal          @default(0) @db.Decimal(14, 4)
+  packagingCostPerUnit  Decimal          @default(0) @db.Decimal(14, 4)
+  currency              String           @default("USD")
+  effectiveDate         DateTime
+  sourceRow             Int?
+  notes                 String?
+  status                CostRecordStatus @default(ACTIVE)
+  metadata              Json?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  organization          Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  upload                CostUpload?      @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  batch                 CogsBatch?       @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  product               Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
+  listing               Listing?         @relation(fields: [listingId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, marketplace, sellerSku, shipmentId, effectiveDate])
+  @@index([organizationId, marketplace, sellerSku, effectiveDate])
+  @@index([organizationId, marketplace, shipmentId])
+  @@index([organizationId, parentSku])
+}
+
+model SalesImport {
+  id               String             @id @default(cuid())
+  organizationId   String
+  marketplace      String
+  source           String             @default("excel")
+  originalFileName String
+  status           ImportStatus       @default(PENDING)
+  rowCount         Int                @default(0)
+  importedCount    Int                @default(0)
+  rejectedCount    Int                @default(0)
+  createdAt        DateTime           @default(now())
+  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orders           SalesOrder[]
+  issues           SalesImportIssue[]
+
+  @@index([organizationId, marketplace, createdAt])
+}
+
+model SalesImportIssue {
+  id             String      @id @default(cuid())
+  organizationId String
+  importId       String
+  rowNumber      Int
+  severity       String      @default("error")
+  code           String
+  message        String
+  rawData        Json?
+  createdAt      DateTime    @default(now())
+  import         SalesImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, importId])
+}
+
+model ImportRun {
+  id                     String                  @id @default(cuid())
+  organizationId         String
+  marketplace            String
+  importKind             String
+  reportType             String
+  reportTypeLabel        String
+  source                 String                  @default("upload")
+  originalFileName       String
+  fileHash               String
+  status                 ImportStatus            @default(PENDING)
+  rowCount               Int                     @default(0)
+  validCount             Int                     @default(0)
+  importedCount          Int                     @default(0)
+  rejectedCount          Int                     @default(0)
+  duplicateOfId          String?
+  options                Json?
+  summary                Json?
+  parsedPayload          Json?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  importedAt             DateTime?
+  organization           Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  issues                 ImportRunIssue[]
+  previewRows            ImportRunPreviewRow[]
+  marketplaceDailyTotals MarketplaceDailyTotal[]
+
+  @@index([organizationId, importKind, createdAt])
+  @@index([organizationId, marketplace, reportType])
+  @@index([organizationId, marketplace, importKind, reportType, fileHash])
+}
+
+model MarketplaceDailyTotal {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  importRunId        String?
+  marketplace        String
+  reportType         String       @default("overview")
+  totalDate          DateTime
+  gmv                Decimal      @default(0) @db.Decimal(14, 4)
+  orders             Int          @default(0)
+  unitsSold          Int          @default(0)
+  refundSales        Decimal      @default(0) @db.Decimal(14, 4)
+  cancelledSales     Decimal      @default(0) @db.Decimal(14, 4)
+  gmvMinusCommission Decimal?     @db.Decimal(14, 4)
+  currency           String       @default("USD")
+  metadata           Json?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  importRun          ImportRun?   @relation(fields: [importRunId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, marketplace, reportType, totalDate])
+  @@index([organizationId, marketplace, totalDate])
+  @@index([organizationId, importRunId])
+}
+
+model ImportRunIssue {
+  id             String    @id @default(cuid())
+  organizationId String
+  importRunId    String
+  rowNumber      Int
+  severity       String    @default("error")
+  code           String
+  message        String
+  rawData        Json?
+  createdAt      DateTime  @default(now())
+  importRun      ImportRun @relation(fields: [importRunId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, importRunId])
+}
+
+model ImportRunPreviewRow {
+  id             String    @id @default(cuid())
+  organizationId String
+  importRunId    String
+  rowNumber      Int
+  status         String
+  message        String?
+  rawData        Json?
+  normalizedData Json?
+  createdAt      DateTime  @default(now())
+  importRun      ImportRun @relation(fields: [importRunId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, importRunId])
+}
+
+model SalesOrder {
+  id              String           @id @default(cuid())
+  organizationId  String
+  importId        String?
+  marketplace     String
+  externalOrderId String
+  orderDate       DateTime
+  status          String?
+  currency        String           @default("USD")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  salesImport     SalesImport?     @relation(fields: [importId], references: [id], onDelete: SetNull)
+  orderItems      SalesOrderItem[]
+  fees            MarketplaceFee[]
+  refunds         Refund[]
+
+  @@unique([organizationId, marketplace, externalOrderId])
+  @@index([organizationId, marketplace, orderDate])
+}
+
+model SalesOrderItem {
+  id              String           @id @default(cuid())
+  organizationId  String
+  orderId         String
+  productId       String?
+  listingId       String?
+  marketplace     String
+  sellerSku       String
+  parentSku       String?
+  externalLineId  String?
+  sourceRow       Int?
+  quantity        Int
+  unitPrice       Decimal          @default(0) @db.Decimal(14, 4)
+  itemRevenue     Decimal          @default(0) @db.Decimal(14, 4)
+  shippingRevenue Decimal          @default(0) @db.Decimal(14, 4)
+  taxCollected    Decimal          @default(0) @db.Decimal(14, 4)
+  discountAmount  Decimal          @default(0) @db.Decimal(14, 4)
+  cogsUnit        Decimal?         @db.Decimal(14, 4)
+  cogsTotal       Decimal          @default(0) @db.Decimal(14, 4)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order           SalesOrder       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product         Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
+  listing         Listing?         @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  fees            MarketplaceFee[]
+  refunds         Refund[]
+
+  @@index([organizationId, marketplace, sellerSku])
+  @@index([organizationId, parentSku])
+}
+
+model MarketplaceFee {
+  id             String          @id @default(cuid())
+  organizationId String
+  orderId        String?
+  orderItemId    String?
+  marketplace    String
+  sellerSku      String?
+  feeType        String
+  feeAmount      Decimal         @default(0) @db.Decimal(14, 4)
+  currency       String          @default("USD")
+  postedAt       DateTime?
+  metadata       Json?
+  createdAt      DateTime        @default(now())
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order          SalesOrder?     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem      SalesOrderItem? @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, marketplace, feeType])
+  @@index([organizationId, sellerSku])
+}
+
+model Refund {
+  id              String          @id @default(cuid())
+  organizationId  String
+  orderId         String?
+  orderItemId     String?
+  marketplace     String
+  sellerSku       String?
+  externalOrderId String?
+  externalLineId  String?
+  refundAmount    Decimal         @default(0) @db.Decimal(14, 4)
+  refundDate      DateTime?
+  currency        String          @default("USD")
+  metadata        Json?
+  createdAt       DateTime        @default(now())
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order           SalesOrder?     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem       SalesOrderItem? @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, marketplace, refundDate])
+  @@index([organizationId, sellerSku])
+  @@index([organizationId, marketplace, externalOrderId])
+}
+
+model AdvertisingCost {
+  id             String       @id @default(cuid())
+  organizationId String
+  marketplace    String
+  source         String       @default("seller_center_sem")
+  sellerSku      String?
+  parentSku      String?
+  campaignId     String?
+  campaignName   String?
+  costDate       DateTime
+  amount         Decimal      @db.Decimal(14, 4)
+  currency       String       @default("USD")
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, marketplace, source, costDate])
+  @@index([organizationId, sellerSku])
+  @@index([organizationId, parentSku])
+}

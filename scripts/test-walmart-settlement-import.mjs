@@ -1,0 +1,351 @@
+import assert from "node:assert/strict";
+import { walmartSettlementImportParsers } from "../src/server/connectors/walmart/settlements.ts";
+
+const parser = walmartSettlementImportParsers[0];
+const csv = [
+  [
+    "Period Start Date",
+    "Period End Date",
+    "Total Payable",
+    "Currency",
+    "Transaction Key",
+    "Transaction Posted Timestamp",
+    "Transaction Type",
+    "Transaction Description",
+    "Customer Order #",
+    "Customer Order line #",
+    "Purchase Order #",
+    "Purchase Order line #",
+    "Amount",
+    "Amount Type",
+    "Ship Qty",
+    "Commission Rate",
+    "Base Commission Rate",
+    "Transaction Reason Description",
+    "Partner Item Id",
+    "Partner GTIN",
+    "Partner Item Name",
+    "Product Tax Code",
+    "Ship to State",
+    "Ship to City",
+    "Ship to Zipcode",
+    "Contract Category",
+    "Product Type",
+    "Commission Rule",
+    "Shipping Method",
+    "Fulfillment Type",
+    "Fulfillment Details"
+  ],
+  [
+    "01/01/2026",
+    "01/14/2026",
+    "91108.89",
+    "USD",
+    "",
+    "01/15/2026",
+    "PaymentSummary",
+    "Deposited in PAYONEER account",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  [
+    "",
+    "",
+    "",
+    "USD",
+    "",
+    "01/04/2026",
+    "Adjustment",
+    "WFS Fulfillment fee",
+    "",
+    "",
+    "129100357863767",
+    "4",
+    "-7.35",
+    "Fee/Reimbursement",
+    "",
+    "",
+    "",
+    "",
+    "SKU-1",
+    "",
+    "Sample item",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "Walmart-fulfilled(WFS)",
+    ""
+  ],
+  [
+    "01/01/2026",
+    "01/01/2026",
+    "",
+    "",
+    "",
+    "01/04/2026",
+    "Campaigns",
+    "SEM Marketing",
+    "",
+    "",
+    "",
+    "",
+    "-791.40",
+    "SEM Marketing Fee",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  [
+    "",
+    "",
+    "",
+    "USD",
+    "",
+    "01/04/2026",
+    "Sale",
+    "Commission",
+    "",
+    "",
+    "129100357863767",
+    "4",
+    "-2.15",
+    "Commission on Product",
+    "",
+    "",
+    "",
+    "",
+    "SKU-1",
+    "",
+    "Sample item",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "Walmart-fulfilled(WFS)",
+    ""
+  ],
+  [
+    "01/01/2026",
+    "01/14/2026",
+    "",
+    "USD",
+    "",
+    "01/15/2026",
+    "Refund",
+    "Refund sales",
+    "",
+    "",
+    "129100357863767",
+    "4",
+    "-22.47",
+    "Product Price",
+    "",
+    "",
+    "",
+    "",
+    "SKU-1",
+    "",
+    "Sample item",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "Walmart-fulfilled(WFS)",
+    ""
+  ],
+  [
+    "01/01/2026",
+    "01/14/2026",
+    "",
+    "USD",
+    "",
+    "01/15/2026",
+    "Refund",
+    "Refunded Shipping",
+    "",
+    "",
+    "129100357863767",
+    "4",
+    "-3.99",
+    "Shipping",
+    "",
+    "",
+    "",
+    "",
+    "SKU-1",
+    "",
+    "Sample item",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "Walmart-fulfilled(WFS)",
+    ""
+  ],
+  [
+    "01/01/2026",
+    "01/14/2026",
+    "",
+    "USD",
+    "",
+    "01/15/2026",
+    "Refund",
+    "Walmart return shipping charge",
+    "",
+    "",
+    "129100357863767",
+    "4",
+    "-1.25",
+    "Fee/Reimbursement",
+    "",
+    "",
+    "",
+    "",
+    "SKU-1",
+    "",
+    "Sample item",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "Walmart-fulfilled(WFS)",
+    ""
+  ],
+  [
+    "01/01/2026",
+    "01/14/2026",
+    "",
+    "USD",
+    "",
+    "01/15/2026",
+    "Adjustment",
+    "WFS Refund",
+    "",
+    "",
+    "129100357863767",
+    "4",
+    "88.66",
+    "WFS Inventory Fee/Reimbursement",
+    "",
+    "",
+    "",
+    "",
+    "SKU-1",
+    "",
+    "Sample item",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "Walmart-fulfilled(WFS)",
+    ""
+  ]
+]
+  .map((row) => row.map(csvCell).join(","))
+  .join("\n");
+
+const context = {
+  marketplace: "walmart",
+  importKind: "settlements",
+  fileName: "payments-new.csv",
+  buffer: Buffer.from(csv),
+  options: {}
+};
+
+assert.equal(parser.detect(context), 100);
+
+const parsed = parser.parse(context);
+
+assert.equal(parsed.reportType, "walmart_payments_new");
+assert.equal(parsed.rowCount, 8);
+assert.equal(parsed.validCount, 7);
+assert.equal(parsed.rejectedCount, 0);
+assert.equal(parsed.summary.feeRows, 4);
+assert.equal(parsed.summary.advertisingRows, 1);
+assert.equal(parsed.summary.refundRows, 2);
+assert.equal(parsed.summary.commissionFeeTotal, 2.15);
+assert.equal(parsed.summary.fulfillmentFeeTotal, 7.35);
+assert.equal(parsed.summary.returnFeeTotal, 1.25);
+assert.equal(parsed.summary.refundSalesTotal, 26.46);
+assert.equal(parsed.summary.semAdvertisingTotal, 791.4);
+assert.equal(parsed.summary.paymentSummaryPeriodStart, "2026-01-01T00:00:00.000Z");
+assert.equal(parsed.summary.paymentSummaryPeriodEnd, "2026-01-14T00:00:00.000Z");
+assert.equal(parsed.summary.inheritedPaymentSummaryPeriodRows, 2);
+assert.equal(parsed.summary.missingPeriodRows, 0);
+assert.equal(parsed.previewRows[0].normalizedData?.feeType, "fulfillment_fee");
+assert.equal(parsed.previewRows[0].normalizedData?.periodStartDate, "2026-01-01");
+assert.equal(parsed.previewRows[0].normalizedData?.periodEndDate, "2026-01-14");
+assert.equal(parsed.previewRows[0].normalizedData?.periodDateSource, "payment_summary");
+assert.equal(parsed.previewRows[2].normalizedData?.feeType, "commission");
+assert.equal(parsed.previewRows[2].normalizedData?.periodDateSource, "payment_summary");
+assert.equal(parsed.previewRows[3].normalizedData?.target, "refund");
+assert.equal(parsed.previewRows[4].normalizedData?.target, "refund");
+assert.equal(parsed.previewRows[5].normalizedData?.feeType, "return_fee");
+assert.equal(parsed.previewRows[6].normalizedData?.feeType, "adjustment");
+
+console.log("ok - parses Walmart Payments New settlement commission, fees, SEM, and refund rows");
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}

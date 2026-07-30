@@ -1,0 +1,5 @@
+-- No-op placeholder.
+-- The Supabase RLS advisor fix for public._prisma_migrations is applied with:
+--   pnpm run supabase:fix-rls-advisor
+-- because this workspace's Supabase direct host is not reachable from the user's
+-- local network, while the pooled app connection is reachable.
