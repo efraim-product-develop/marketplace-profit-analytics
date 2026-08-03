@@ -46,6 +46,8 @@ This backlog is the working source of truth for project priorities. Read it befo
 - Added Parent P&L monthly comparison using the same daily Item Sales source as other reporting ranges.
 - Added Parent P&L CSV export.
 - Added Parent P&L source labels, reconciliation indicators, and selected-SKU order history inside expanded parent rows.
+- Added Parent P&L rollup column chooser so financial/context columns can be shown or hidden per browser.
+- Fixed Parent P&L advertising rollup so child SKU Walmart Connect spend resolves to the parent and parent rows reconcile against child SKU rows when ad rows do not already store `parentSku`.
 - Added focused Parent P&L page helper tests.
 - Added ad spend model as `AdvertisingCost`.
 - Added legacy ad spend upload path.

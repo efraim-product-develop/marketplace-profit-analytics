@@ -6,6 +6,8 @@ import {
   getParentPnlSourceLabel,
   parseParentPnlSearchParams
 } from "../src/server/pnl/parent-page.ts";
+import { resolveAdvertisingCostParentSku } from "../src/server/pnl/advertising-parent-resolution.ts";
+import { reconcileParentAdvertisingFromSkuRows } from "../src/server/pnl/parent-advertising-rollup.ts";
 import { buildPnlPeriodRanges } from "../src/server/pnl/periods.ts";
 
 const referenceDate = new Date("2026-07-09T12:00:00.000Z");
@@ -181,6 +183,93 @@ const tests = [
     }
   },
   {
+    name: "reconciles parent Walmart Connect spend from child SKU rows",
+    run() {
+      const rows = reconcileParentAdvertisingFromSkuRows(
+        [
+          buildProfitRow({
+            parentSku: "PARENT-1",
+            sellerSku: undefined,
+            label: "walmart:PARENT-1",
+            netRevenue: 100,
+            grossProfit: 80,
+            advertisingCost: 0,
+            walmartConnectAdvertisingCost: 0,
+            netProfit: 80,
+            contributionProfit: 80,
+            marginPercent: 80,
+            netMarginPercent: 80,
+            profitPerUnit: 16
+          })
+        ],
+        [
+          buildProfitRow({
+            parentSku: "PARENT-1",
+            sellerSku: "SKU-1",
+            label: "walmart:SKU-1",
+            walmartConnectAdvertisingCost: 12,
+            advertisingCost: 12
+          })
+        ]
+      );
+      const [row] = rows;
+
+      assert.equal(rows.length, 1);
+      assert.equal(row.walmartConnectAdvertisingCost, 12);
+      assert.equal(row.advertisingCost, 12);
+      assert.equal(row.netProfit, 68);
+      assert.equal(row.contributionProfit, 68);
+      assert.equal(row.netMarginPercent, 68);
+    }
+  },
+  {
+    name: "hides duplicate ad-only parent rows that are actually child SKUs",
+    run() {
+      const rows = reconcileParentAdvertisingFromSkuRows(
+        [
+          buildProfitRow({
+            parentSku: "PARENT-1",
+            sellerSku: undefined,
+            label: "walmart:PARENT-1",
+            netRevenue: 100,
+            grossProfit: 80,
+            advertisingCost: 0,
+            walmartConnectAdvertisingCost: 0,
+            netProfit: 80
+          }),
+          buildProfitRow({
+            parentSku: "CHILD-SKU-1",
+            sellerSku: undefined,
+            label: "walmart:CHILD-SKU-1",
+            quantity: 0,
+            grossRevenue: 0,
+            netRevenue: 0,
+            salesRefunds: 0,
+            marketplaceFees: 0,
+            cogs: 0,
+            semAdvertisingCost: 0,
+            advertisingCost: 12,
+            walmartConnectAdvertisingCost: 12,
+            netProfit: -12
+          })
+        ],
+        [
+          buildProfitRow({
+            parentSku: "PARENT-1",
+            sellerSku: "CHILD-SKU-1",
+            label: "walmart:CHILD-SKU-1",
+            walmartConnectAdvertisingCost: 12,
+            advertisingCost: 12
+          })
+        ]
+      );
+
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].parentSku, "PARENT-1");
+      assert.equal(rows[0].walmartConnectAdvertisingCost, 12);
+    }
+  },
+  {
     name: "labels source and reconciliation indicators",
     run() {
       assert.equal(getParentPnlSourceLabel("item_sales_daily_summary"), "Item Sales");
@@ -193,6 +282,35 @@ const tests = [
       assert.match(
         getParentPnlReconciliationLabel(buildSalesSourceSummary({ kind: "po_order_detail" }), 3),
         /COGS review/
+      );
+    }
+  },
+  {
+    name: "resolves child SKU Walmart Connect ad spend to parent rollups",
+    run() {
+      const parentSkuBySellerSku = new Map([["CHILD-SKU-1", "PARENT-SKU-1"]]);
+
+      assert.equal(
+        resolveAdvertisingCostParentSku(
+          { sellerSku: "CHILD-SKU-1", parentSku: null },
+          parentSkuBySellerSku
+        ),
+        "PARENT-SKU-1"
+      );
+      assert.equal(
+        resolveAdvertisingCostParentSku(
+          { sellerSku: "CHILD-SKU-1", parentSku: "EXPLICIT-PARENT" },
+          parentSkuBySellerSku
+        ),
+        "EXPLICIT-PARENT"
+      );
+      assert.equal(
+        resolveAdvertisingCostParentSku(
+          { sellerSku: "CHILD-SKU-2", parentSku: null },
+          parentSkuBySellerSku,
+          "SELECTED-PARENT"
+        ),
+        "SELECTED-PARENT"
       );
     }
   }

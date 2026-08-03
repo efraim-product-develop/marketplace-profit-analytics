@@ -3,6 +3,40 @@ import { calculateProfitRows, summarizeProfit } from "../src/server/pnl/engine.t
 
 const tests = [
   {
+    name: "rolls child SKU Walmart Connect spend into parent rows when ad parent is missing",
+    run() {
+      const rows = calculateProfitRows(
+        [
+          {
+            marketplace: "walmart",
+            salesSource: "item_sales_daily_summary",
+            sellerSku: "CHILD-SKU-1",
+            parentSku: "PARENT-SKU-1",
+            quantity: 1,
+            itemRevenue: 100
+          }
+        ],
+        "parentSku",
+        [
+          {
+            marketplace: "walmart",
+            sellerSku: "CHILD-SKU-1",
+            parentSku: null,
+            source: "walmart_connect_item_performance",
+            amount: 12
+          }
+        ]
+      );
+      const [row] = rows;
+
+      assert.equal(rows.length, 1);
+      assert.equal(row.parentSku, "PARENT-SKU-1");
+      assert.equal(row.walmartConnectAdvertisingCost, 12);
+      assert.equal(row.advertisingCost, 12);
+      assert.equal(row.netProfit, 88);
+    }
+  },
+  {
     name: "uses item revenue only for PO sales and tracks shipping/discount separately",
     run() {
       const rows = calculateProfitRows(

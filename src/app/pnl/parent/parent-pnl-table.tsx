@@ -8,7 +8,7 @@ import {
   type SortingState,
   useReactTable
 } from "@tanstack/react-table";
-import { ArrowDownUp, ChevronDown, ChevronRight } from "lucide-react";
+import { ArrowDownUp, ChevronDown, ChevronRight, Columns3 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 import { formatCurrency, formatDate, formatNumber, formatPercent } from "@/lib/format";
@@ -19,6 +19,7 @@ const parentColumns: ColumnDef<ProfitRow>[] = [
   {
     accessorKey: "parentSku",
     header: "Parent SKU",
+    enableHiding: false,
     cell: ({ row }) => row.original.parentSku ?? "Unassigned"
   },
   {
@@ -41,11 +42,6 @@ const parentColumns: ColumnDef<ProfitRow>[] = [
     cell: ({ row }) => formatCurrency(row.original.grossRevenue)
   },
   {
-    accessorKey: "discounts",
-    header: "Discounts",
-    cell: ({ row }) => formatCurrency(row.original.discounts)
-  },
-  {
     accessorKey: "netRevenue",
     header: "Net Revenue",
     cell: ({ row }) => formatCurrency(row.original.netRevenue)
@@ -54,11 +50,6 @@ const parentColumns: ColumnDef<ProfitRow>[] = [
     accessorKey: "salesRefunds",
     header: "Refund Sales",
     cell: ({ row }) => formatCurrency(row.original.salesRefunds)
-  },
-  {
-    accessorKey: "refunds",
-    header: "Refund Adjustments",
-    cell: ({ row }) => formatCurrency(row.original.refunds)
   },
   {
     accessorKey: "commissionFees",
@@ -117,6 +108,31 @@ const parentColumns: ColumnDef<ProfitRow>[] = [
   }
 ];
 
+const COLUMN_VISIBILITY_STORAGE_KEY = "marketplace-profit-parent-pnl-columns-v1";
+
+type ParentColumnVisibilityState = Record<string, boolean>;
+
+const parentColumnLabels: Record<string, string> = {
+  parentSku: "Parent SKU",
+  marketplace: "Marketplace",
+  salesSource: "Source",
+  quantity: "Units",
+  grossRevenue: "Gross Revenue",
+  netRevenue: "Net Revenue",
+  salesRefunds: "Refund Sales",
+  commissionFees: "Commission",
+  fulfillmentFees: "Fulfillment",
+  otherSettlementFees: "Other Fees",
+  cogs: "COGS",
+  missingCogsUnits: "COGS Status",
+  walmartConnectAdvertisingCost: "Walmart Connect Ads",
+  semAdvertisingCost: "SEM Ads",
+  netProfit: "Profit",
+  netMarginPercent: "Profit Margin",
+  profitPerUnit: "Profit / Unit",
+  orders: "Orders"
+};
+
 export function ParentPnlTable({
   currentQueryString,
   orderHistoryRows,
@@ -131,6 +147,8 @@ export function ParentPnlTable({
   skuRows: ProfitRow[];
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnVisibility, setColumnVisibility] = useState<ParentColumnVisibilityState>({});
+  const [hasLoadedColumnVisibility, setHasLoadedColumnVisibility] = useState(false);
   const selectedParentKey = useMemo(() => {
     if (!selectedSku) {
       return null;
@@ -161,6 +179,27 @@ export function ParentPnlTable({
   }, [skuRows]);
 
   useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(COLUMN_VISIBILITY_STORAGE_KEY);
+      if (saved) {
+        setColumnVisibility(JSON.parse(saved) as ParentColumnVisibilityState);
+      }
+    } catch {
+      setColumnVisibility({});
+    } finally {
+      setHasLoadedColumnVisibility(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedColumnVisibility) {
+      return;
+    }
+
+    window.localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify(columnVisibility));
+  }, [columnVisibility, hasLoadedColumnVisibility]);
+
+  useEffect(() => {
     if (!selectedParentKey) {
       return;
     }
@@ -179,11 +218,15 @@ export function ParentPnlTable({
   const table = useReactTable({
     data: rows,
     columns: parentColumns,
-    state: { sorting },
+    state: { sorting, columnVisibility },
     onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel()
   });
+
+  const visibleColumns = table.getVisibleLeafColumns();
+  const tableMinWidth = Math.max(760, visibleColumns.length * 128 + 96);
 
   function toggleParent(parentKey: string) {
     setExpandedParents((current) => {
@@ -200,9 +243,49 @@ export function ParentPnlTable({
 
   return (
     <div className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-panel">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[1660px] border-collapse text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase tracking-[0.12em] text-slate-500">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+        <div className="text-sm font-semibold text-ink">Parent Rollup Columns</div>
+        <details className="relative">
+          <summary className="flex h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-semibold text-slate-600 transition hover:border-ocean hover:text-ocean">
+            <Columns3 aria-hidden className="h-4 w-4" />
+            Columns
+          </summary>
+          <div className="absolute right-0 z-20 mt-2 grid w-72 gap-3 rounded-md border border-slate-200 bg-white p-3 shadow-panel">
+            <div className="grid max-h-80 gap-2 overflow-y-auto pr-1">
+              {table
+                .getAllLeafColumns()
+                .filter((column) => column.getCanHide())
+                .map((column) => (
+                  <label
+                    key={column.id}
+                    className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    <span>{getParentColumnLabel(column.id)}</span>
+                    <input
+                      checked={column.getIsVisible()}
+                      className="h-4 w-4 rounded border-slate-300 text-ocean focus:ring-ocean/30"
+                      onChange={column.getToggleVisibilityHandler()}
+                      type="checkbox"
+                    />
+                  </label>
+                ))}
+            </div>
+            <button
+              className="rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:border-ocean hover:text-ocean"
+              onClick={() => table.resetColumnVisibility()}
+              type="button"
+            >
+              Show all
+            </button>
+          </div>
+        </details>
+      </div>
+      <div className="max-h-[calc(100vh-12rem)] overflow-auto overscroll-contain">
+        <table
+          className="w-full border-collapse text-left text-sm"
+          style={{ minWidth: `${tableMinWidth}px` }}
+        >
+          <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase tracking-[0.12em] text-slate-500 shadow-[0_1px_0_0_rgb(226,232,240)]">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
                 <th className="w-12 border-b border-slate-200 px-3 py-3">
@@ -274,9 +357,10 @@ export function ParentPnlTable({
                                 currentQueryString={currentQueryString}
                                 isSelected={isSelected}
                                 row={child}
+                                visibleColumnIds={visibleColumns.map((column) => column.id)}
                               />
                               {isSelected ? (
-                                <OrderHistoryChildRow rows={orderHistoryRows} />
+                                <OrderHistoryChildRow colSpan={visibleColumns.length} rows={orderHistoryRows} />
                               ) : null}
                             </Fragment>
                           );
@@ -284,7 +368,7 @@ export function ParentPnlTable({
                       ) : (
                         <tr className="border-b border-slate-100 bg-slate-50/70">
                           <td />
-                          <td colSpan={parentColumns.length} className="px-4 py-4 text-slate-500">
+                          <td colSpan={visibleColumns.length} className="px-4 py-4 text-slate-500">
                             No SKU rows found for this parent.
                           </td>
                         </tr>
@@ -295,7 +379,7 @@ export function ParentPnlTable({
               })
             ) : (
               <tr>
-                <td className="px-4 py-10 text-center text-slate-500" colSpan={parentColumns.length + 1}>
+                <td className="px-4 py-10 text-center text-slate-500" colSpan={visibleColumns.length + 1}>
                   No parent P&L rows yet.
                 </td>
               </tr>
@@ -307,74 +391,99 @@ export function ParentPnlTable({
   );
 }
 
-function SkuChildRow({
-  currentQueryString,
-  isSelected,
-  row
-}: {
-  currentQueryString: string;
-  isSelected: boolean;
-  row: ProfitRow;
-}) {
-  return (
-    <tr className={cn("border-b border-slate-100 bg-slate-50/70", isSelected && "bg-blue-50/70")}>
-      <td />
-      <td className="px-4 py-3 align-middle">
+function renderSkuChildCell(
+  columnId: string,
+  row: ProfitRow,
+  currentQueryString: string,
+  isSelected: boolean
+) {
+  switch (columnId) {
+    case "parentSku":
+      return (
         <span className="ml-4 grid gap-0.5 border-l-2 border-teal-500 pl-3">
           <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">SKU</span>
           <span className="font-semibold text-slate-800">{row.sellerSku ?? "Unassigned SKU"}</span>
         </span>
-      </td>
-      <td className="px-4 py-3 align-middle text-slate-600">{row.marketplace}</td>
-      <td className="px-4 py-3 align-middle">
-        <SourceBadge source={row.salesSource} />
-      </td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatNumber(row.quantity)}</td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(row.grossRevenue)}</td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(row.discounts)}</td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(row.netRevenue)}</td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(row.salesRefunds)}</td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(row.refunds)}</td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(row.commissionFees)}</td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(row.fulfillmentFees)}</td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(getOtherSettlementFees(row))}</td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(row.cogs)}</td>
-      <td className="px-4 py-3 align-middle">
-        <CogsStatusBadge missingUnits={row.missingCogsUnits} />
-      </td>
-      <td className="px-4 py-3 align-middle text-slate-600">
-        {formatCurrency(row.walmartConnectAdvertisingCost)}
-      </td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(row.semAdvertisingCost)}</td>
-      <td className="px-4 py-3 align-middle font-semibold text-slate-800">
-        {formatCurrency(row.netProfit)}
-      </td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatPercent(row.netMarginPercent)}</td>
-      <td className="px-4 py-3 align-middle text-slate-600">{formatCurrency(row.profitPerUnit)}</td>
-      <td className="px-4 py-3 align-middle">
-        {row.sellerSku ? (
-          <a
-            className={cn(
-              "text-sm font-semibold text-ocean transition hover:text-ocean/80",
-              isSelected && "text-blue-700"
-            )}
-            href={buildOrderHref(currentQueryString, row.sellerSku)}
-          >
-            {isSelected ? "Open" : "View"}
-          </a>
-        ) : (
-          "-"
-        )}
-      </td>
+      );
+    case "marketplace":
+      return row.marketplace;
+    case "salesSource":
+      return <SourceBadge source={row.salesSource} />;
+    case "quantity":
+      return formatNumber(row.quantity);
+    case "grossRevenue":
+      return formatCurrency(row.grossRevenue);
+    case "netRevenue":
+      return formatCurrency(row.netRevenue);
+    case "salesRefunds":
+      return formatCurrency(row.salesRefunds);
+    case "commissionFees":
+      return formatCurrency(row.commissionFees);
+    case "fulfillmentFees":
+      return formatCurrency(row.fulfillmentFees);
+    case "otherSettlementFees":
+      return formatCurrency(getOtherSettlementFees(row));
+    case "cogs":
+      return formatCurrency(row.cogs);
+    case "missingCogsUnits":
+      return <CogsStatusBadge missingUnits={row.missingCogsUnits} />;
+    case "walmartConnectAdvertisingCost":
+      return formatCurrency(row.walmartConnectAdvertisingCost);
+    case "semAdvertisingCost":
+      return formatCurrency(row.semAdvertisingCost);
+    case "netProfit":
+      return <span className="font-semibold text-slate-800">{formatCurrency(row.netProfit)}</span>;
+    case "netMarginPercent":
+      return formatPercent(row.netMarginPercent);
+    case "profitPerUnit":
+      return formatCurrency(row.profitPerUnit);
+    case "orders":
+      return row.sellerSku ? (
+        <a
+          className={cn(
+            "text-sm font-semibold text-ocean transition hover:text-ocean/80",
+            isSelected && "text-blue-700"
+          )}
+          href={buildOrderHref(currentQueryString, row.sellerSku)}
+        >
+          {isSelected ? "Open" : "View"}
+        </a>
+      ) : (
+        "-"
+      );
+    default:
+      return "-";
+  }
+}
+
+function SkuChildRow({
+  currentQueryString,
+  isSelected,
+  row,
+  visibleColumnIds
+}: {
+  currentQueryString: string;
+  isSelected: boolean;
+  row: ProfitRow;
+  visibleColumnIds: string[];
+}) {
+  return (
+    <tr className={cn("border-b border-slate-100 bg-slate-50/70", isSelected && "bg-blue-50/70")}>
+      <td />
+      {visibleColumnIds.map((columnId) => (
+        <td key={`${row.sellerSku ?? "unassigned"}:${columnId}`} className="px-4 py-3 align-middle text-slate-600">
+          {renderSkuChildCell(columnId, row, currentQueryString, isSelected)}
+        </td>
+      ))}
     </tr>
   );
 }
 
-function OrderHistoryChildRow({ rows }: { rows: SkuPnlOrderDrilldownRow[] }) {
+function OrderHistoryChildRow({ colSpan, rows }: { colSpan: number; rows: SkuPnlOrderDrilldownRow[] }) {
   return (
     <tr className="border-b border-slate-100 bg-blue-50/40">
       <td />
-      <td colSpan={parentColumns.length} className="px-4 py-4">
+      <td colSpan={colSpan} className="px-4 py-4">
         <div className="overflow-hidden rounded-md border border-blue-100 bg-white">
           <div className="flex items-center justify-between gap-3 border-b border-blue-100 px-4 py-3">
             <div>
@@ -457,6 +566,10 @@ function getOtherSettlementFees({
   marketplaceFees: number;
 }) {
   return marketplaceFees - commissionFees - fulfillmentFees;
+}
+
+function getParentColumnLabel(columnId: string) {
+  return parentColumnLabels[columnId] ?? columnId;
 }
 
 function SourceBadge({ source }: { source: ProfitRow["salesSource"] }) {

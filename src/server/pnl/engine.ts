@@ -19,6 +19,7 @@ export function calculateProfitRows(
   additionalRefunds: ProfitRefundInput[] = []
 ): ProfitRow[] {
   const groups = new Map<string, ProfitRow>();
+  const parentSkuBySellerSku = buildParentSkuBySellerSku(lines);
 
   for (const line of lines) {
     const key = getGroupKey(line, groupBy);
@@ -65,7 +66,7 @@ export function calculateProfitRows(
   }
 
   for (const adCost of advertisingCosts) {
-    const key = getAdvertisingGroupKey(adCost, groupBy);
+    const key = getAdvertisingGroupKey(adCost, groupBy, parentSkuBySellerSku);
     const existing = groups.get(key.label) ?? createEmptyProfitRow(key);
     applyAdvertisingCost(existing, adCost);
     recalculateRowProfit(existing);
@@ -163,10 +164,14 @@ export function summarizeProfit(rows: ProfitRow[]) {
 
 function getAdvertisingGroupKey(
   adCost: ProfitAdvertisingCostInput,
-  groupBy: GroupBy
+  groupBy: GroupBy,
+  parentSkuBySellerSku: Map<string, string>
 ): ProfitGroupKey {
   if (groupBy === "parentSku") {
-    const parentSku = adCost.parentSku || "Unassigned parent";
+    const parentSku =
+      adCost.parentSku ||
+      (adCost.sellerSku ? parentSkuBySellerSku.get(adCost.sellerSku) : null) ||
+      "Unassigned parent";
     return {
       marketplace: adCost.marketplace,
       parentSku,
@@ -181,6 +186,18 @@ function getAdvertisingGroupKey(
     parentSku: adCost.parentSku ?? undefined,
     label: `${adCost.marketplace}:${sellerSku}`
   };
+}
+
+function buildParentSkuBySellerSku(lines: ProfitLineInput[]) {
+  const parentSkuBySellerSku = new Map<string, string>();
+
+  for (const line of lines) {
+    if (line.sellerSku && line.parentSku && !parentSkuBySellerSku.has(line.sellerSku)) {
+      parentSkuBySellerSku.set(line.sellerSku, line.parentSku);
+    }
+  }
+
+  return parentSkuBySellerSku;
 }
 
 function getFeeGroupKey(fee: ProfitFeeInput, groupBy: GroupBy): ProfitGroupKey {

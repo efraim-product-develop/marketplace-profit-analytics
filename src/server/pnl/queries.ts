@@ -1,7 +1,9 @@
 import type { MarketplaceFee, Prisma, Refund } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { EffectiveCogsService } from "@/server/cogs/effective-cogs";
+import { resolveAdvertisingCostParentSku } from "@/server/pnl/advertising-parent-resolution";
 import { calculateProfitRows, summarizeProfit } from "@/server/pnl/engine";
+import { reconcileParentAdvertisingFromSkuRows } from "@/server/pnl/parent-advertising-rollup";
 import { getCurrentOrganizationId } from "@/server/organizations/current";
 import { buildPnlPeriodRanges } from "@/server/pnl/periods";
 import { isFullCalendarMonthRange, normalizePnlDateRange } from "@/server/pnl/calendar-dates";
@@ -285,6 +287,7 @@ export async function getParentPnl({
         rollupLines,
         "sellerSku"
       );
+  const reconciledRows = reconcileParentAdvertisingFromSkuRows(rows, skuRows);
   const settlementAllocation = dailyRollupResult
     ? dailyRollupResult.settlementAllocation
     : summarizeSettlementAllocation([
@@ -293,7 +296,7 @@ export async function getParentPnl({
         ...rollupRefundAdjustments
       ]);
   return {
-    rows,
+    rows: reconciledRows,
     skuRows,
     periodTiles,
     monthlyComparisonRows: calculateParentMonthlyComparisonRows(
@@ -309,7 +312,7 @@ export async function getParentPnl({
       marketplace
     ),
     parentOptions,
-    summary: summarizeProfit(rows),
+    summary: summarizeProfit(reconciledRows),
     salesSource: dailyRollupResult
       ? dailyRollupResult.salesSource
       : summarizeSalesSource(rollupLines, rollupSuppressedDetailLines),
@@ -1560,9 +1563,11 @@ async function addCatalogParentSkus(
 
   const listings: Array<{ sellerSku: string; parentSku: string | null }> = [];
   const products: Array<{ internalSku: string | null; parentSku: string | null }> = [];
+  const orderItems: Array<{ sellerSku: string; parentSku: string | null }> = [];
+  const costRecords: Array<{ sellerSku: string; parentSku: string | null }> = [];
 
   for (const skuChunk of chunkArray(missingSkus, PRISMA_IN_FILTER_CHUNK_SIZE)) {
-    const [listingChunk, productChunk] = await Promise.all([
+    const [listingChunk, productChunk, orderItemChunk, costRecordChunk] = await Promise.all([
       prisma.listing.findMany({
         where: {
           organizationId,
@@ -1578,11 +1583,31 @@ async function addCatalogParentSkus(
           parentSku: { not: null }
         },
         select: { internalSku: true, parentSku: true }
+      }),
+      prisma.salesOrderItem.findMany({
+        where: {
+          organizationId,
+          sellerSku: { in: skuChunk },
+          parentSku: { not: null }
+        },
+        distinct: ["sellerSku"],
+        select: { sellerSku: true, parentSku: true }
+      }),
+      prisma.costRecord.findMany({
+        where: {
+          organizationId,
+          sellerSku: { in: skuChunk },
+          parentSku: { not: null }
+        },
+        distinct: ["sellerSku"],
+        select: { sellerSku: true, parentSku: true }
       })
     ]);
 
     listings.push(...listingChunk);
     products.push(...productChunk);
+    orderItems.push(...orderItemChunk);
+    costRecords.push(...costRecordChunk);
   }
 
   for (const listing of listings) {
@@ -1594,6 +1619,18 @@ async function addCatalogParentSkus(
   for (const product of products) {
     if (product.internalSku && product.parentSku && !parentSkuBySellerSku.get(product.internalSku)) {
       parentSkuBySellerSku.set(product.internalSku, product.parentSku);
+    }
+  }
+
+  for (const item of orderItems) {
+    if (item.parentSku && !parentSkuBySellerSku.get(item.sellerSku)) {
+      parentSkuBySellerSku.set(item.sellerSku, item.parentSku);
+    }
+  }
+
+  for (const record of costRecords) {
+    if (record.parentSku && !parentSkuBySellerSku.get(record.sellerSku)) {
+      parentSkuBySellerSku.set(record.sellerSku, record.parentSku);
     }
   }
 }
@@ -1647,13 +1684,27 @@ async function getAdvertisingCosts(
       ...buildParentSkuAdvertisingWhere(parentSku, sellerSkus)
     }
   });
+  const includedCosts = costs.filter(isIncludedAdvertisingCost);
+  const parentSkuBySellerSku = new Map<string, string | null>();
 
-  return costs
-    .filter(isIncludedAdvertisingCost)
+  await addCatalogParentSkus(
+    organizationId,
+    parentSkuBySellerSku,
+    uniqueStrings(includedCosts.map((cost) => cost.sellerSku))
+  );
+
+  return includedCosts
     .map((cost) => ({
       marketplace: cost.marketplace,
       sellerSku: cost.sellerSku,
-      parentSku: cost.parentSku,
+      parentSku: resolveAdvertisingCostParentSku(
+        {
+          sellerSku: cost.sellerSku,
+          parentSku: cost.parentSku
+        },
+        parentSkuBySellerSku,
+        parentSku
+      ),
       source: cost.source,
       amount: toNumber(cost.amount),
       costDate: cost.costDate,
