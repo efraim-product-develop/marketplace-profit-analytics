@@ -21,6 +21,11 @@ export type ImportCommitContext = {
 export type ImportParseOptions = {
   reportMonth?: string;
   reportDate?: string;
+  reportStartDate?: string;
+  reportEndDate?: string;
+  createMissingCatalog?: boolean;
+  activateForPnl?: boolean;
+  importSource?: string;
 };
 
 export type ParsedImportIssue = {
@@ -51,6 +56,7 @@ export type ParsedImportReport = {
   summary: Record<string, unknown>;
   payload: Prisma.InputJsonValue;
   duplicateVersion?: string;
+  allowDuplicateFileImport?: boolean;
 };
 
 export type ImportCommitResult = {

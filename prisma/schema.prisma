@@ -47,13 +47,16 @@ model Organization {
   cogsBatches            CogsBatch[]
   costRecords            CostRecord[]
   importRuns             ImportRun[]
+  connectorReportRequests ConnectorReportRequest[]
   salesImports           SalesImport[]
   salesOrders            SalesOrder[]
   salesOrderItems        SalesOrderItem[]
   marketplaceFees        MarketplaceFee[]
   refunds                Refund[]
   advertisingCosts       AdvertisingCost[]
+  settlementPayouts      SettlementPayout[]
   marketplaceDailyTotals MarketplaceDailyTotal[]
+  marketplaceDailySalesCoverage MarketplaceDailySalesCoverage[]
 }
 
 model OrganizationSettings {
@@ -275,6 +278,7 @@ model ImportRun {
   issues                 ImportRunIssue[]
   previewRows            ImportRunPreviewRow[]
   marketplaceDailyTotals MarketplaceDailyTotal[]
+  settlementPayouts      SettlementPayout[]
 
   @@index([organizationId, importKind, createdAt])
   @@index([organizationId, marketplace, reportType])
@@ -304,6 +308,94 @@ model MarketplaceDailyTotal {
   @@unique([organizationId, marketplace, reportType, totalDate])
   @@index([organizationId, marketplace, totalDate])
   @@index([organizationId, importRunId])
+}
+
+model SettlementPayout {
+  id                    String       @id @default(cuid())
+  organizationId        String
+  importRunId           String?
+  marketplace           String
+  source                String       @default("settlement_report")
+  settlementReference   String
+  settlementPeriodStart DateTime?
+  settlementPeriodEnd   DateTime?
+  payoutAmount          Decimal      @db.Decimal(14, 4)
+  payoutDate            DateTime?
+  currency              String       @default("USD")
+  originalFileName      String?
+  metadata              Json?
+  importedAt            DateTime     @default(now())
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  importRun             ImportRun?   @relation(fields: [importRunId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, marketplace, settlementReference])
+  @@index([organizationId, marketplace, settlementPeriodEnd])
+  @@index([organizationId, marketplace, payoutDate])
+  @@index([organizationId, importRunId])
+}
+
+model ConnectorReportRequest {
+  id                String       @id @default(cuid())
+  organizationId    String
+  marketplace       String
+  connector         String
+  source            String
+  reportType        String
+  reportVersion     String
+  granularity       String
+  overallStartDate  DateTime
+  overallEndDate    DateTime
+  chunkStartDate    DateTime
+  chunkEndDate      DateTime
+  externalRequestId String?
+  status            String       @default("QUEUED")
+  requestedAt       DateTime?
+  readyAt           DateTime?
+  importedAt        DateTime?
+  rowCount          Int          @default(0)
+  importedCount     Int          @default(0)
+  skippedCount      Int          @default(0)
+  unmappedSkuCount  Int          @default(0)
+  retryCount        Int          @default(0)
+  lastError         String?
+  metadata          Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  coverageDates     MarketplaceDailySalesCoverage[]
+
+  @@unique([organizationId, marketplace, connector, externalRequestId])
+  @@index([organizationId, marketplace, connector, status])
+  @@index([organizationId, marketplace, source, chunkStartDate, chunkEndDate])
+}
+
+model MarketplaceDailySalesCoverage {
+  id                       String                  @id @default(cuid())
+  organizationId           String
+  marketplace              String
+  source                   String
+  coverageDate             DateTime
+  status                   String                  @default("MISSING")
+  connectorReportRequestId String?
+  rowsImported             Int                     @default(0)
+  rowsSkipped              Int                     @default(0)
+  unmappedSkuCount         Int                     @default(0)
+  requestedAt              DateTime?
+  importedAt               DateTime?
+  failedAt                 DateTime?
+  error                    String?
+  metadata                 Json?
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  organization             Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectorReportRequest   ConnectorReportRequest? @relation(fields: [connectorReportRequestId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, marketplace, source, coverageDate], map: "mdsc_org_market_source_date_key")
+  @@index([organizationId, marketplace, source, status], map: "mdsc_org_market_source_status_idx")
+  @@index([organizationId, marketplace, source, coverageDate], map: "mdsc_org_market_source_date_idx")
+  @@index([organizationId, connectorReportRequestId], map: "mdsc_org_report_request_idx")
 }
 
 model ImportRunIssue {
@@ -367,6 +459,24 @@ model SalesOrderItem {
   sellerSku       String
   parentSku       String?
   externalLineId  String?
+  purchaseOrderNumber     String?
+  purchaseOrderLineNumber String?
+  customerOrderNumber     String?
+  customerOrderLineNumber String?
+  poReportLineNumber      String?
+  poReportFlids           String?
+  poItemId                String?
+  poProductName           String?
+  poFulfillmentType       String?
+  poOrderStatus           String?
+  poOriginalQuantity      Int?
+  poCancelledQuantity     Int?
+  poOriginalItemRevenue   Decimal?         @db.Decimal(14, 4)
+  poPriceSourceKind       String?
+  poShippingCost          Decimal?         @db.Decimal(14, 4)
+  poTax                   Decimal?         @db.Decimal(14, 4)
+  poDiscount              Decimal?         @db.Decimal(14, 4)
+  poOriginalFileName      String?
   sourceRow       Int?
   quantity        Int
   unitPrice       Decimal          @default(0) @db.Decimal(14, 4)
@@ -387,6 +497,8 @@ model SalesOrderItem {
 
   @@index([organizationId, marketplace, sellerSku])
   @@index([organizationId, parentSku])
+  @@index([organizationId, marketplace, purchaseOrderNumber], map: "SalesOrderItem_po_lookup_idx")
+  @@index([organizationId, marketplace, purchaseOrderNumber, purchaseOrderLineNumber], map: "SalesOrderItem_po_line_lookup_idx")
 }
 
 model MarketplaceFee {

@@ -129,6 +129,29 @@ const tests = [
     }
   },
   {
+    name: "uses transaction posted timestamp without settlement-period allocation for new rows",
+    run() {
+      const included = allocateCommission(
+        commissionFee(1400, {
+          reportingDateSource: "transaction_posted_timestamp"
+        }),
+        range("2026-07-14", "2026-07-14")
+      );
+      const excluded = allocateCommission(
+        commissionFee(1400, {
+          reportingDateSource: "transaction_posted_timestamp"
+        }),
+        range("2026-07-05", "2026-07-07")
+      );
+
+      assert.equal(included.fee?.amount, 1400);
+      assert.equal(included.diagnostic.fallback, false);
+      assert.equal(included.diagnostic.missingPeriodMetadata, false);
+      assert.equal(excluded.fee, null);
+      assert.equal(excluded.diagnostic.allocatedCommissionIncluded, 0);
+    }
+  },
+  {
     name: "UTC date values do not shift the selected calendar day",
     run() {
       const result = allocateCommission(

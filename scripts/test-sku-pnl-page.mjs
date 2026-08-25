@@ -87,7 +87,7 @@ const tests = [
           parentSku: "PARENT-1",
           brand: 'Inspire "Pro"',
           department: "Gloves, Nitrile",
-          salesSource: "item_sales_daily_summary",
+          salesSource: "po_report",
           label: "walmart:SKU-1",
           quantity: 3,
           grossRevenue: 100,
@@ -104,6 +104,7 @@ const tests = [
           returnFees: 0,
           adjustmentFees: 0,
           otherFees: 0,
+          otherFeeCategoryBreakdown: [],
           walmartConnectAdvertisingCost: 1,
           semAdvertisingCost: 3,
           advertisingCost: 4,
@@ -123,16 +124,14 @@ const tests = [
 
       assert.match(csv, /"Inspire ""Pro"""/);
       assert.match(csv, /"Gloves, Nitrile"/);
-      assert.match(csv, /Item Sales/);
+      assert.match(csv, /PO Reports/);
     }
   },
   {
     name: "labels source indicators",
     run() {
-      assert.equal(getSkuPnlSourceLabel("item_sales_daily_summary"), "Item Sales");
-      assert.equal(getSkuPnlSourceLabel("item_sales_monthly_summary"), "Legacy Item Sales");
-      assert.equal(getSkuPnlSourceLabel("po_order_detail"), "PO Audit");
-      assert.equal(getSkuPnlSourceLabel("mixed"), "Mixed");
+      assert.equal(getSkuPnlSourceLabel("po_report"), "PO Reports");
+      assert.equal(getSkuPnlSourceLabel("unsupported_source"), "No Sales");
       assert.equal(getSkuPnlSourceLabel(undefined), "No Sales");
     }
   }

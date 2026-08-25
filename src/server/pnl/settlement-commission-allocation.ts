@@ -35,6 +35,28 @@ export function prepareSettlementDerivedCommissionForDateRange(
   fee: ProfitFeeInput,
   dateRange?: SettlementDateRange
 ): SettlementCommissionOverlapResult {
+  if (isTransactionPostedSettlementMetadata(fee.metadata)) {
+    const included = isDateInRange(fee.postedAt, dateRange);
+    const diagnostic = buildTransactionPostedCommissionDiagnostic(
+      fee.amount,
+      dateRange,
+      included ? fee.amount : 0
+    );
+
+    return {
+      fee: included
+        ? {
+            ...fee,
+            metadata: {
+              ...(fee.metadata ?? {}),
+              [SETTLEMENT_COMMISSION_ALLOCATION_METADATA_KEY]: diagnostic
+            }
+          }
+        : null,
+      diagnostic
+    };
+  }
+
   const periodStart = readSettlementPeriodStart(fee.metadata);
   const periodEnd = readSettlementPeriodEnd(fee.metadata);
   const allocation = allocator.allocateForRange(
@@ -156,6 +178,10 @@ function isWalmartPaymentsNewMetadata(metadata: Record<string, unknown> | undefi
   return readMetadataText(metadata, "source") === WALMART_PAYMENTS_NEW_SOURCE;
 }
 
+function isTransactionPostedSettlementMetadata(metadata: Record<string, unknown> | undefined) {
+  return readMetadataText(metadata, "reportingDateSource") === "transaction_posted_timestamp";
+}
+
 function isCommissionFeeType(feeType: string) {
   const normalized = feeType.toLowerCase().replace(/[\s-]+/g, "_");
   return (
@@ -168,6 +194,37 @@ function isCommissionFeeType(feeType: string) {
 function readMetadataText(metadata: Record<string, unknown> | undefined, key: string) {
   const value = metadata?.[key];
   return typeof value === "string" ? value.trim() || null : null;
+}
+
+function buildTransactionPostedCommissionDiagnostic(
+  originalAmount: number,
+  dateRange: SettlementDateRange | undefined,
+  includedAmount: number
+): SettlementCommissionDiagnostic {
+  return {
+    originalCommissionAmount: originalAmount,
+    settlementStart: null,
+    settlementEnd: null,
+    totalSettlementDays: 0,
+    selectedRangeStart: formatUtcDay(dateRange?.from ? parseDateToUtcDay(dateRange.from) : null),
+    selectedRangeEnd: formatUtcDay(dateRange?.to ? parseDateToUtcDay(dateRange.to) : null),
+    overlapDays: includedAmount === 0 ? 0 : 1,
+    allocatedCommissionIncluded: includedAmount,
+    fallback: false,
+    missingPeriodMetadata: false
+  };
+}
+
+function isDateInRange(date: Date | null | undefined, dateRange?: SettlementDateRange) {
+  if (!date) {
+    return false;
+  }
+
+  if (!dateRange?.from && !dateRange?.to) {
+    return true;
+  }
+
+  return (!dateRange.from || date >= dateRange.from) && (!dateRange.to || date <= dateRange.to);
 }
 
 function formatUtcDay(date: Date | null) {

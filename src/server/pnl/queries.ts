@@ -4,9 +4,16 @@ import { EffectiveCogsService } from "@/server/cogs/effective-cogs";
 import { resolveAdvertisingCostParentSku } from "@/server/pnl/advertising-parent-resolution";
 import { calculateProfitRows, summarizeProfit } from "@/server/pnl/engine";
 import { reconcileParentAdvertisingFromSkuRows } from "@/server/pnl/parent-advertising-rollup";
+import {
+  buildProductAttributionDiagnostics,
+  filterProductAttributableFees,
+  filterProductAttributableRefunds,
+  filterProductAttributedAdvertisingCosts
+} from "@/server/pnl/product-attribution";
 import { getCurrentOrganizationId } from "@/server/organizations/current";
 import { buildPnlPeriodRanges } from "@/server/pnl/periods";
 import { isFullCalendarMonthRange, normalizePnlDateRange } from "@/server/pnl/calendar-dates";
+import { getPoSalesSourceFromOrderItem } from "@/server/sales/po-sales-source";
 import {
   calculateDailyPnl,
   isDailyCapableWalmartConnectCost
@@ -22,6 +29,7 @@ import {
   type SettlementDateRange
 } from "@/server/pnl/settlement-period-allocator";
 import { selectDashboardProfitLines } from "@/server/pnl/source-selection";
+import { sortSettlementPayoutHistoryRows } from "@/server/settlements/payouts";
 import type {
   ParentPnlMonthlyComparisonRow,
   ParentPnlPeriodTile,
@@ -35,6 +43,7 @@ import type {
   ProfitLineInput,
   ProfitRefundInput,
   ProfitRow,
+  SettlementPayoutHistoryRow,
   SkuPnlFilterOption,
   SkuPnlFilterOptions,
   SkuPnlFilters,
@@ -95,8 +104,24 @@ export async function getSkuPnl(filters: SkuPnlFilters = {}, selectedSku = "") {
     advertisingCosts,
     filters.dateRange
   );
+  const productPeriodAdvertisingCosts =
+    filterProductAttributedAdvertisingCosts(periodAdvertisingCosts);
 
   if (useDailyPnlPath && filters.dateRange) {
+    const dailyFeeAdjustments = prepareFeesForDateRange(
+      lineSelection.feeAdjustments,
+      filters.dateRange,
+      lines
+    );
+    const dailyRefundAdjustments = prepareRefundsForDateRange(
+      lineSelection.refundAdjustments,
+      filters.dateRange
+    );
+    const attributionDiagnostics = buildProductAttributionDiagnostics({
+      feeAdjustments: dailyFeeAdjustments,
+      refundAdjustments: dailyRefundAdjustments,
+      advertisingCosts: periodAdvertisingCosts
+    });
     const dailyResult = calculateDailyPnl({
       organizationId,
       marketplace: filters.marketplace ?? "",
@@ -104,9 +129,10 @@ export async function getSkuPnl(filters: SkuPnlFilters = {}, selectedSku = "") {
       groupBy: "sellerSku",
       lines,
       suppressedDetailLines: lineSelection.suppressedDetailLines,
-      advertisingCosts,
-      feeAdjustments: lineSelection.feeAdjustments,
-      refundAdjustments: lineSelection.refundAdjustments
+      advertisingCosts: productPeriodAdvertisingCosts,
+      feeAdjustments: filterProductAttributableFees(dailyFeeAdjustments),
+      refundAdjustments: filterProductAttributableRefunds(dailyRefundAdjustments),
+      sellerCenterSemMode: "exclude"
     });
 
     return {
@@ -115,6 +141,7 @@ export async function getSkuPnl(filters: SkuPnlFilters = {}, selectedSku = "") {
       salesSource: dailyResult.salesSource,
       settlementAllocation: dailyResult.settlementAllocation,
       dataQuality: dailyResult.missingDataSources,
+      attributionDiagnostics,
       sourceMetadata: dailyResult.sourceMetadata,
       diagnostic: dailyResult.diagnostic,
       settlementCommissionDiagnostic: getFirstSettlementCommissionDiagnostic(
@@ -135,13 +162,20 @@ export async function getSkuPnl(filters: SkuPnlFilters = {}, selectedSku = "") {
     lineSelection.refundAdjustments,
     filters.dateRange
   );
+  const productPeriodFeeAdjustments = filterProductAttributableFees(periodFeeAdjustments);
+  const productPeriodRefundAdjustments = filterProductAttributableRefunds(periodRefundAdjustments);
+  const attributionDiagnostics = buildProductAttributionDiagnostics({
+    feeAdjustments: periodFeeAdjustments,
+    refundAdjustments: periodRefundAdjustments,
+    advertisingCosts: periodAdvertisingCosts
+  });
   const rows = decorateProfitRows(
     calculateProfitRows(
       lines,
       "sellerSku",
-      periodAdvertisingCosts,
-      periodFeeAdjustments,
-      periodRefundAdjustments
+      productPeriodAdvertisingCosts,
+      productPeriodFeeAdjustments,
+      productPeriodRefundAdjustments
     ),
     lines,
     "sellerSku"
@@ -151,18 +185,22 @@ export async function getSkuPnl(filters: SkuPnlFilters = {}, selectedSku = "") {
     summary: summarizeProfit(rows),
     salesSource: summarizeSalesSource(lines, lineSelection.suppressedDetailLines),
     settlementAllocation: summarizeSettlementAllocation([
-      ...periodFeeAdjustments,
-      ...periodAdvertisingCosts,
-      ...periodRefundAdjustments
+      ...productPeriodFeeAdjustments,
+      ...productPeriodAdvertisingCosts,
+      ...productPeriodRefundAdjustments
     ]),
-    dataQuality: buildDataQualityLabels(summarizeProfit(rows), summarizeSettlementAllocation([
-      ...periodFeeAdjustments,
-      ...periodAdvertisingCosts,
-      ...periodRefundAdjustments
-    ])),
+    dataQuality: buildDataQualityLabels(
+      summarizeProfit(rows),
+      summarizeSettlementAllocation([
+        ...productPeriodFeeAdjustments,
+        ...productPeriodAdvertisingCosts,
+        ...productPeriodRefundAdjustments
+      ])
+    ),
+    attributionDiagnostics,
     sourceMetadata: null,
     diagnostic: null,
-    settlementCommissionDiagnostic: getFirstSettlementCommissionDiagnostic(periodFeeAdjustments),
+    settlementCommissionDiagnostic: getFirstSettlementCommissionDiagnostic(productPeriodFeeAdjustments),
     orderDrilldownRows: selectedSku
       ? buildSkuOrderDrilldownRows(
           lineSelection.lines,
@@ -214,7 +252,8 @@ export async function getParentPnl({
     dateRange,
     useDailyPnlPath,
     organizationId,
-    marketplace
+    marketplace,
+    !parentSku
   );
   const hasExplicitDateRange = Boolean(dateRange?.from || dateRange?.to);
   const defaultPeriodRange = !hasExplicitDateRange ? getTileDateRange(periodTiles[0]) : null;
@@ -227,12 +266,21 @@ export async function getParentPnl({
   const rollupAdvertisingCosts = defaultPeriodRange
     ? prepareAdvertisingCostsForDateRange(advertisingCosts, defaultPeriodRange)
     : prepareAdvertisingCostsForDateRange(advertisingCosts, dateRange);
+  const productRollupAdvertisingCosts =
+    filterProductAttributedAdvertisingCosts(rollupAdvertisingCosts);
   const rollupFeeAdjustments = defaultPeriodRange
     ? prepareFeesForDateRange(lineSelection.feeAdjustments, defaultPeriodRange, rollupLines)
     : prepareFeesForDateRange(lineSelection.feeAdjustments, dateRange, rollupLines);
   const rollupRefundAdjustments = defaultPeriodRange
     ? filterRefundsByDateRange(lineSelection.refundAdjustments, defaultPeriodRange)
     : prepareRefundsForDateRange(lineSelection.refundAdjustments, dateRange);
+  const productRollupFeeAdjustments = filterProductAttributableFees(rollupFeeAdjustments);
+  const productRollupRefundAdjustments = filterProductAttributableRefunds(rollupRefundAdjustments);
+  const attributionDiagnostics = buildProductAttributionDiagnostics({
+    feeAdjustments: rollupFeeAdjustments,
+    refundAdjustments: rollupRefundAdjustments,
+    advertisingCosts: rollupAdvertisingCosts
+  });
   const dailyRollupResult =
     useDailyPnlPath && (defaultPeriodRange || dateRange)
       ? calculateDailyPnl({
@@ -242,9 +290,10 @@ export async function getParentPnl({
           groupBy: "parentSku",
           lines,
           suppressedDetailLines: lineSelection.suppressedDetailLines,
-          advertisingCosts,
-          feeAdjustments: lineSelection.feeAdjustments,
-          refundAdjustments: lineSelection.refundAdjustments
+          advertisingCosts: productRollupAdvertisingCosts,
+          feeAdjustments: productRollupFeeAdjustments,
+          refundAdjustments: productRollupRefundAdjustments,
+          sellerCenterSemMode: "exclude"
         })
       : null;
   const rows = dailyRollupResult
@@ -253,9 +302,9 @@ export async function getParentPnl({
         calculateProfitRows(
           rollupLines,
           "parentSku",
-          rollupAdvertisingCosts,
-          rollupFeeAdjustments,
-          rollupRefundAdjustments
+          productRollupAdvertisingCosts,
+          productRollupFeeAdjustments,
+          productRollupRefundAdjustments
         ),
         rollupLines,
         "parentSku"
@@ -269,9 +318,10 @@ export async function getParentPnl({
           groupBy: "sellerSku",
           lines,
           suppressedDetailLines: lineSelection.suppressedDetailLines,
-          advertisingCosts,
-          feeAdjustments: lineSelection.feeAdjustments,
-          refundAdjustments: lineSelection.refundAdjustments
+          advertisingCosts: productRollupAdvertisingCosts,
+          feeAdjustments: productRollupFeeAdjustments,
+          refundAdjustments: productRollupRefundAdjustments,
+          sellerCenterSemMode: "exclude"
         })
       : null;
   const skuRows = dailySkuResult
@@ -280,9 +330,9 @@ export async function getParentPnl({
         calculateProfitRows(
           rollupLines,
           "sellerSku",
-          rollupAdvertisingCosts,
-          rollupFeeAdjustments,
-          rollupRefundAdjustments
+          productRollupAdvertisingCosts,
+          productRollupFeeAdjustments,
+          productRollupRefundAdjustments
         ),
         rollupLines,
         "sellerSku"
@@ -291,10 +341,32 @@ export async function getParentPnl({
   const settlementAllocation = dailyRollupResult
     ? dailyRollupResult.settlementAllocation
     : summarizeSettlementAllocation([
-        ...rollupFeeAdjustments,
-        ...rollupAdvertisingCosts,
-        ...rollupRefundAdjustments
+        ...productRollupFeeAdjustments,
+        ...productRollupAdvertisingCosts,
+        ...productRollupRefundAdjustments
       ]);
+  const productSummary = summarizeProfit(reconciledRows);
+  const marketplaceRollupSummary =
+    !parentSku
+      ? getMarketplaceRollupSummary({
+          organizationId,
+          marketplace: marketplace ?? "",
+          dateRange: defaultPeriodRange ?? dateRange,
+          useDailyPnlPath,
+          lines,
+          suppressedDetailLines: lineSelection.suppressedDetailLines,
+          advertisingCosts: rollupAdvertisingCosts,
+          feeAdjustments: rollupFeeAdjustments,
+          refundAdjustments: rollupRefundAdjustments,
+          fallbackSummary: productSummary
+        })
+      : productSummary;
+  const payoutDateRange = defaultPeriodRange ?? dateRange;
+  const settlementPayouts = await getSettlementPayoutHistory(
+    organizationId,
+    marketplace,
+    payoutDateRange
+  );
   return {
     rows: reconciledRows,
     skuRows,
@@ -309,21 +381,24 @@ export async function getParentPnl({
       comparisonPeriod,
       useDailyPnlPath,
       organizationId,
-      marketplace
+      marketplace,
+      !parentSku
     ),
     parentOptions,
-    summary: summarizeProfit(reconciledRows),
+    summary: marketplaceRollupSummary,
     salesSource: dailyRollupResult
       ? dailyRollupResult.salesSource
       : summarizeSalesSource(rollupLines, rollupSuppressedDetailLines),
     settlementAllocation,
+    settlementPayouts,
     dataQuality: dailyRollupResult
       ? dailyRollupResult.missingDataSources
-      : buildDataQualityLabels(summarizeProfit(rows), settlementAllocation),
+      : buildDataQualityLabels(marketplaceRollupSummary, settlementAllocation),
+    attributionDiagnostics,
     sourceMetadata: dailyRollupResult?.sourceMetadata ?? null,
     diagnostic: dailyRollupResult?.diagnostic ?? null,
     settlementCommissionDiagnostic: getFirstSettlementCommissionDiagnostic(
-      dailyRollupResult?.feeAdjustments ?? rollupFeeAdjustments
+      dailyRollupResult?.feeAdjustments ?? productRollupFeeAdjustments
     ),
     orderDrilldownRows: selectedSku
       ? buildSkuOrderDrilldownRows(
@@ -341,6 +416,59 @@ type ProfitLineSelection = {
   feeAdjustments: ProfitFeeInput[];
   refundAdjustments: ProfitRefundInput[];
 };
+
+function getMarketplaceRollupSummary({
+  organizationId,
+  marketplace,
+  dateRange,
+  useDailyPnlPath,
+  lines,
+  suppressedDetailLines,
+  advertisingCosts,
+  feeAdjustments,
+  refundAdjustments,
+  fallbackSummary
+}: {
+  organizationId: string;
+  marketplace: string;
+  dateRange?: PnlDateRange | null;
+  useDailyPnlPath: boolean;
+  lines: ProfitLineInput[];
+  suppressedDetailLines: ProfitLineInput[];
+  advertisingCosts: ProfitAdvertisingCostInput[];
+  feeAdjustments: ProfitFeeInput[];
+  refundAdjustments: ProfitRefundInput[];
+  fallbackSummary: ReturnType<typeof summarizeProfit>;
+}) {
+  if (useDailyPnlPath && dateRange) {
+    return calculateDailyPnl({
+      organizationId,
+      marketplace,
+      dateRange,
+      groupBy: "parentSku",
+      lines,
+      suppressedDetailLines,
+      advertisingCosts,
+      feeAdjustments,
+      refundAdjustments,
+      sellerCenterSemMode: "summaryOnly"
+    }).summary;
+  }
+
+  if (!dateRange?.from && !dateRange?.to && !lines.length && !advertisingCosts.length) {
+    return fallbackSummary;
+  }
+
+  const marketplaceRows = calculateProfitRows(
+    lines,
+    "parentSku",
+    advertisingCosts,
+    feeAdjustments,
+    refundAdjustments
+  );
+
+  return summarizeProfit(marketplaceRows);
+}
 
 async function getProfitLineSelection(
   organizationId: string,
@@ -393,9 +521,11 @@ async function getProfitLineSelection(
     organizationId,
     parentSkuBySellerSku,
     uniqueStrings([
+      ...items.map((item) => item.sellerSku),
       ...standaloneFees.map((fee) => fee.sellerSku),
       ...standaloneRefunds.map((refund) => refund.sellerSku)
-    ])
+    ]),
+    filters.marketplace
   );
 
   const effectiveCogsService = new EffectiveCogsService(costRecords);
@@ -413,17 +543,15 @@ async function getProfitLineSelection(
   const lines: ProfitLineInput[] = items.map((item) => {
     const effectiveCogs = effectiveCogsByLineId.get(item.id);
 
+    const currentParentSku = parentSkuBySellerSku.get(item.sellerSku) ?? item.parentSku;
+
     return {
       marketplace: item.marketplace,
       orderId: item.order.externalOrderId,
       orderStatus: item.order.status,
-      salesSource: isDailyItemSalesSummaryStatus(item.order.status)
-        ? "item_sales_daily_summary"
-        : isAggregateSummaryStatus(item.order.status)
-        ? "item_sales_monthly_summary"
-        : "po_order_detail",
+      salesSource: getSalesSourceFromOrderItem(item),
       sellerSku: item.sellerSku,
-      parentSku: item.parentSku,
+      parentSku: currentParentSku,
       brand: getLineBrand(item),
       department: getLineDepartment(item),
       externalLineId: item.externalLineId,
@@ -434,13 +562,13 @@ async function getProfitLineSelection(
       shippingRevenue: toNumber(item.shippingRevenue),
       taxCollected: toNumber(item.taxCollected),
       discountAmount: toNumber(item.discountAmount),
-      salesRefunds: getItemSalesSummarySalesRefundsFromFees(item),
+      salesRefunds: getSupportedLineSalesRefundsFromFees(item),
       cogsTotal: effectiveCogs?.cogsTotal ?? 0,
       missingCogs: effectiveCogs?.missingCogs ?? true,
       fees: item.fees.map((fee) => ({
         marketplace: fee.marketplace,
         sellerSku: fee.sellerSku ?? item.sellerSku,
-        parentSku: item.parentSku,
+        parentSku: currentParentSku,
         feeType: fee.feeType,
         amount: toNumber(fee.feeAmount),
         postedAt: fee.postedAt,
@@ -450,7 +578,7 @@ async function getProfitLineSelection(
         ...item.refunds.map((refund) => ({
           marketplace: refund.marketplace,
           sellerSku: refund.sellerSku ?? item.sellerSku,
-          parentSku: item.parentSku,
+          parentSku: currentParentSku,
           amount: toNumber(refund.refundAmount),
           refundDate: refund.refundDate,
           metadata: toRecord(refund.metadata)
@@ -489,6 +617,59 @@ async function getProfitLineSelection(
       mapStandaloneRefundToProfitRefund(refund, parentSkuBySellerSku, parentSku)
     )
   };
+}
+
+async function getSettlementPayoutHistory(
+  organizationId: string,
+  marketplace?: string,
+  dateRange?: PnlDateRange
+): Promise<SettlementPayoutHistoryRow[]> {
+  const dateWhere = buildDateRangeWhere(dateRange);
+  const periodOverlapWhere =
+    dateRange?.from || dateRange?.to
+      ? {
+          AND: [
+            dateRange.to ? { settlementPeriodStart: { lte: dateRange.to } } : {},
+            dateRange.from ? { settlementPeriodEnd: { gte: dateRange.from } } : {}
+          ]
+        }
+      : null;
+  const rows = await prisma.settlementPayout.findMany({
+    where: {
+      organizationId,
+      ...(marketplace ? { marketplace } : {}),
+      ...(dateWhere
+        ? {
+            OR: [
+              ...(periodOverlapWhere ? [periodOverlapWhere] : []),
+              { settlementPeriodStart: dateWhere },
+              { settlementPeriodEnd: dateWhere },
+              { payoutDate: dateWhere }
+            ]
+          }
+        : {})
+    },
+    orderBy: [
+      { settlementPeriodEnd: "desc" },
+      { payoutDate: "desc" },
+      { importedAt: "desc" }
+    ],
+    take: 20
+  });
+
+  return sortSettlementPayoutHistoryRows(rows.map((row) => ({
+    id: row.id,
+    marketplace: row.marketplace,
+    settlementReference: row.settlementReference,
+    settlementPeriodStart: row.settlementPeriodStart,
+    settlementPeriodEnd: row.settlementPeriodEnd,
+    payoutAmount: toNumber(row.payoutAmount),
+    payoutDate: row.payoutDate,
+    currency: row.currency,
+    source: row.source,
+    originalFileName: row.originalFileName,
+    importedAt: row.importedAt
+  })));
 }
 
 function decorateProfitRows(
@@ -610,103 +791,14 @@ function filterStandaloneRowsByLineFilters<T extends { sellerSku: string | null;
   });
 }
 
-function isAggregateSummaryStatus(status?: string | null) {
-  return status?.toLowerCase() === "monthly_summary";
-}
-
-function isDailyItemSalesSummaryStatus(status?: string | null) {
-  return status?.toLowerCase() === "daily_summary";
-}
-
 function summarizeLineSourceKind(lines: ProfitLineInput[]) {
-  const hasDailySummary = lines.some((line) => line.salesSource === "item_sales_daily_summary");
-  const hasSummary = lines.some((line) => line.salesSource === "item_sales_monthly_summary");
-  const hasDetail = lines.some((line) => line.salesSource === "po_order_detail");
+  const hasPoReport = lines.some((line) => line.salesSource === "po_report");
 
-  if (hasDailySummary && (hasSummary || hasDetail)) {
-    return "mixed";
-  }
-
-  if (hasDailySummary) {
-    return "item_sales_daily_summary";
-  }
-
-  if (hasSummary && hasDetail) {
-    return "mixed";
-  }
-
-  if (hasSummary) {
-    return "item_sales_monthly_summary";
-  }
-
-  if (hasDetail) {
-    return "po_order_detail";
+  if (hasPoReport) {
+    return "po_report";
   }
 
   return "none";
-}
-
-function getLineMonthKey(line: ProfitLineInput) {
-  if (!line.orderDate) {
-    return null;
-  }
-
-  const month = String(line.orderDate.getUTCMonth() + 1).padStart(2, "0");
-  return `${line.marketplace}:${line.orderDate.getUTCFullYear()}-${month}`;
-}
-
-function getSelectedSummaryMonthKeys(lines: ProfitLineInput[]) {
-  return new Set(
-    lines
-      .filter((line) => line.salesSource === "item_sales_monthly_summary")
-      .map(getLineMonthKey)
-      .filter((key): key is string => Boolean(key))
-  );
-}
-
-function shouldSuppressSettlementCommissionForSummaryMonth(
-  fee: ProfitFeeInput,
-  summaryMonthKeys: Set<string>
-) {
-  if (!summaryMonthKeys.size) {
-    return false;
-  }
-
-  return getFeeCoverageMonthKeys(fee).some((monthKey) => summaryMonthKeys.has(monthKey));
-}
-
-function getFeeCoverageMonthKeys(fee: ProfitFeeInput) {
-  const periodStart = parseMetadataDate(readMetadataText(fee.metadata, "periodStartDate"));
-  const periodEnd = parseMetadataDate(readMetadataText(fee.metadata, "periodEndDate"));
-
-  if (periodStart && periodEnd && periodEnd >= periodStart) {
-    return getMonthKeysInRange(fee.marketplace, periodStart, periodEnd);
-  }
-
-  const postedAt = startOfUtcDay(fee.postedAt);
-  return postedAt ? [getMonthKey(fee.marketplace, postedAt)] : [];
-}
-
-function getMonthKeysInRange(marketplace: string, start: Date, end: Date) {
-  const keys: string[] = [];
-  let cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
-  const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
-
-  while (cursor <= last) {
-    keys.push(getMonthKey(marketplace, cursor));
-    cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1));
-  }
-
-  return keys;
-}
-
-function getMonthKey(marketplace: string, date: Date) {
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  return `${marketplace}:${date.getUTCFullYear()}-${month}`;
-}
-
-function parseMetadataDate(value: string | null) {
-  return startOfUtcDay(value ? new Date(value) : null);
 }
 
 function startOfUtcDay(date: Date | null | undefined) {
@@ -727,7 +819,8 @@ function calculateParentPeriodTiles(
   dateRange?: PnlDateRange,
   useDailyPnlPath = false,
   organizationId = "",
-  marketplace = ""
+  marketplace = "",
+  useMarketplaceFinancialSummary = false
 ): ParentPnlPeriodTile[] {
   const periods = buildPnlPeriodRanges(comparisonPeriod, dateRange);
   const tiles = periods.map((period) => {
@@ -739,11 +832,26 @@ function calculateParentPeriodTiles(
         groupBy: "parentSku",
         lines,
         suppressedDetailLines,
+        advertisingCosts: filterProductAttributedAdvertisingCosts(advertisingCosts),
+        feeAdjustments: filterProductAttributableFees(feeAdjustments),
+        refundAdjustments: filterProductAttributableRefunds(refundAdjustments),
+        sellerCenterSemMode: "exclude"
+      });
+      const marketplaceDailyResult = calculateDailyPnl({
+        organizationId,
+        marketplace,
+        dateRange: { from: period.start, to: period.end },
+        groupBy: "parentSku",
+        lines,
+        suppressedDetailLines,
         advertisingCosts,
         feeAdjustments,
-        refundAdjustments
+        refundAdjustments,
+        sellerCenterSemMode: "summaryOnly"
       });
       const summary = dailyResult.summary;
+      const marketplaceSummary = marketplaceDailyResult.summary;
+      const displaySummary = useMarketplaceFinancialSummary ? marketplaceSummary : summary;
       const refundUnits = dailyResult.lines
         .filter((line) => isRefundLine(line))
         .reduce((total, line) => total + line.quantity, 0);
@@ -755,32 +863,35 @@ function calculateParentPeriodTiles(
         from: period.start.toISOString(),
         to: period.end.toISOString(),
         salesSource: dailyResult.salesSource,
-        netRevenue: summary.netRevenue,
+        grossRevenue: displaySummary.grossRevenue,
+        netRevenue: displaySummary.netRevenue,
         netRevenueChangePercent: null,
         orderCount: calculateOrderCount(dailyResult.lines),
-        units: summary.quantity,
+        units: displaySummary.quantity,
         refundUnits,
-        refunds: summary.refunds,
-        salesRefunds: summary.salesRefunds,
-        marketplaceFees: summary.marketplaceFees,
-        commissionFees: summary.commissionFees,
-        fulfillmentFees: summary.fulfillmentFees,
-        shippingFees: summary.shippingFees,
-        storageFees: summary.storageFees,
-        returnFees: summary.returnFees,
-        adjustmentFees: summary.adjustmentFees,
-        otherFees: summary.otherFees,
-        semAdvertisingCost: summary.semAdvertisingCost,
-        walmartConnectAdvertisingCost: summary.walmartConnectAdvertisingCost,
-        advertisingCost: summary.advertisingCost,
-        cogs: summary.cogs,
-        grossProfit: summary.grossProfit,
+        refunds: displaySummary.refunds,
+        salesRefunds: displaySummary.salesRefunds,
+        marketplaceFees: displaySummary.marketplaceFees,
+        commissionFees: displaySummary.commissionFees,
+        fulfillmentFees: displaySummary.fulfillmentFees,
+        shippingFees: displaySummary.shippingFees,
+        storageFees: displaySummary.storageFees,
+        returnFees: displaySummary.returnFees,
+        adjustmentFees: displaySummary.adjustmentFees,
+        otherFees: displaySummary.otherFees,
+        otherWalmartFeesAndAdjustments: getOtherWalmartFeesAndAdjustments(marketplaceSummary),
+        otherFeeCategoryBreakdown: displaySummary.otherFeeCategoryBreakdown,
+        semAdvertisingCost: marketplaceSummary.semAdvertisingCost,
+        walmartConnectAdvertisingCost: displaySummary.walmartConnectAdvertisingCost,
+        advertisingCost: displaySummary.advertisingCost,
+        cogs: displaySummary.cogs,
+        grossProfit: displaySummary.grossProfit,
         grossProfitChangePercent: null,
-        grossMarginPercent: summary.grossMarginPercent,
-        netProfit: summary.netProfit,
+        grossMarginPercent: displaySummary.grossMarginPercent,
+        netProfit: displaySummary.netProfit,
         netProfitChangePercent: null,
-        marginPercent: summary.marginPercent,
-        missingCogsUnits: summary.missingCogsUnits
+        marginPercent: displaySummary.marginPercent,
+        missingCogsUnits: displaySummary.missingCogsUnits
       };
     }
 
@@ -791,6 +902,7 @@ function calculateParentPeriodTiles(
       from: period.start,
       to: period.end
     });
+    const productPeriodAdCosts = filterProductAttributedAdvertisingCosts(periodAdCosts);
     const periodSuppressedDetailLines = suppressedDetailLines.filter(
       (line) => line.orderDate && line.orderDate >= period.start && line.orderDate <= period.end
     );
@@ -802,14 +914,25 @@ function calculateParentPeriodTiles(
       from: period.start,
       to: period.end
     });
-    const parentRows = calculateProfitRows(
+    const productPeriodFeeAdjustments = filterProductAttributableFees(periodFeeAdjustments);
+    const productPeriodRefundAdjustments = filterProductAttributableRefunds(periodRefundAdjustments);
+    const marketplaceRows = calculateProfitRows(
       periodLines,
       "parentSku",
       periodAdCosts,
       periodFeeAdjustments,
       periodRefundAdjustments
     );
+    const marketplaceSummary = summarizeProfit(marketplaceRows);
+    const parentRows = calculateProfitRows(
+      periodLines,
+      "parentSku",
+      productPeriodAdCosts,
+      productPeriodFeeAdjustments,
+      productPeriodRefundAdjustments
+    );
     const summary = summarizeProfit(parentRows);
+    const displaySummary = useMarketplaceFinancialSummary ? marketplaceSummary : summary;
     const explicitOrderCount = periodLines.reduce(
       (total, line) => total + (line.orderCount ?? 0),
       0
@@ -831,32 +954,35 @@ function calculateParentPeriodTiles(
       from: period.start.toISOString(),
       to: period.end.toISOString(),
       salesSource: summarizeSalesSource(periodLines, periodSuppressedDetailLines),
-      netRevenue: summary.netRevenue,
+      grossRevenue: displaySummary.grossRevenue,
+      netRevenue: displaySummary.netRevenue,
       netRevenueChangePercent: null,
       orderCount: explicitOrderCount + orderIds.size,
-      units: summary.quantity,
+      units: displaySummary.quantity,
       refundUnits,
-      refunds: summary.refunds,
-      salesRefunds: summary.salesRefunds,
-      marketplaceFees: summary.marketplaceFees,
-      commissionFees: summary.commissionFees,
-      fulfillmentFees: summary.fulfillmentFees,
-      shippingFees: summary.shippingFees,
-      storageFees: summary.storageFees,
-      returnFees: summary.returnFees,
-      adjustmentFees: summary.adjustmentFees,
-      otherFees: summary.otherFees,
-      semAdvertisingCost: summary.semAdvertisingCost,
-      walmartConnectAdvertisingCost: summary.walmartConnectAdvertisingCost,
-      advertisingCost: summary.advertisingCost,
-      cogs: summary.cogs,
-      grossProfit: summary.grossProfit,
+      refunds: displaySummary.refunds,
+      salesRefunds: displaySummary.salesRefunds,
+      marketplaceFees: displaySummary.marketplaceFees,
+      commissionFees: displaySummary.commissionFees,
+      fulfillmentFees: displaySummary.fulfillmentFees,
+      shippingFees: displaySummary.shippingFees,
+      storageFees: displaySummary.storageFees,
+      returnFees: displaySummary.returnFees,
+      adjustmentFees: displaySummary.adjustmentFees,
+      otherFees: displaySummary.otherFees,
+      otherWalmartFeesAndAdjustments: getOtherWalmartFeesAndAdjustments(marketplaceSummary),
+      otherFeeCategoryBreakdown: displaySummary.otherFeeCategoryBreakdown,
+      semAdvertisingCost: marketplaceSummary.semAdvertisingCost,
+      walmartConnectAdvertisingCost: displaySummary.walmartConnectAdvertisingCost,
+      advertisingCost: displaySummary.advertisingCost,
+      cogs: displaySummary.cogs,
+      grossProfit: displaySummary.grossProfit,
       grossProfitChangePercent: null,
-      grossMarginPercent: summary.grossMarginPercent,
-      netProfit: summary.netProfit,
+      grossMarginPercent: displaySummary.grossMarginPercent,
+      netProfit: displaySummary.netProfit,
       netProfitChangePercent: null,
-      marginPercent: summary.marginPercent,
-      missingCogsUnits: summary.missingCogsUnits
+      marginPercent: displaySummary.marginPercent,
+      missingCogsUnits: displaySummary.missingCogsUnits
     };
   });
 
@@ -887,7 +1013,8 @@ function calculateParentMonthlyComparisonRows(
   comparisonPeriod: PnlComparisonPeriod = "month",
   useDailyPnlPath = false,
   organizationId = "",
-  marketplace = ""
+  marketplace = "",
+  useMarketplaceFinancialSummary = false
 ): ParentPnlMonthlyComparisonRow[] {
   const periods = buildPnlPeriodRanges(comparisonPeriod, dateRange);
   const rows = periods.map((period) => {
@@ -899,11 +1026,26 @@ function calculateParentMonthlyComparisonRows(
         groupBy: "parentSku",
         lines,
         suppressedDetailLines,
+        advertisingCosts: filterProductAttributedAdvertisingCosts(advertisingCosts),
+        feeAdjustments: filterProductAttributableFees(feeAdjustments),
+        refundAdjustments: filterProductAttributableRefunds(refundAdjustments),
+        sellerCenterSemMode: "exclude"
+      });
+      const marketplaceDailyResult = calculateDailyPnl({
+        organizationId,
+        marketplace,
+        dateRange: { from: period.start, to: period.end },
+        groupBy: "parentSku",
+        lines,
+        suppressedDetailLines,
         advertisingCosts,
         feeAdjustments,
-        refundAdjustments
+        refundAdjustments,
+        sellerCenterSemMode: "summaryOnly"
       });
       const summary = dailyResult.summary;
+      const marketplaceSummary = marketplaceDailyResult.summary;
+      const displaySummary = useMarketplaceFinancialSummary ? marketplaceSummary : summary;
 
       return {
         monthKey: period.key,
@@ -912,30 +1054,33 @@ function calculateParentMonthlyComparisonRows(
         from: period.start.toISOString(),
         to: period.end.toISOString(),
         salesSource: dailyResult.salesSource,
-        netRevenue: summary.netRevenue,
+        grossRevenue: displaySummary.grossRevenue,
+        netRevenue: displaySummary.netRevenue,
         netRevenueChangePercent: null,
         orderCount: calculateOrderCount(dailyResult.lines),
-        units: summary.quantity,
-        refunds: summary.refunds,
-        salesRefunds: summary.salesRefunds,
-        marketplaceFees: summary.marketplaceFees,
-        commissionFees: summary.commissionFees,
-        fulfillmentFees: summary.fulfillmentFees,
-        shippingFees: summary.shippingFees,
-        storageFees: summary.storageFees,
-        returnFees: summary.returnFees,
-        adjustmentFees: summary.adjustmentFees,
-        otherFees: summary.otherFees,
-        semAdvertisingCost: summary.semAdvertisingCost,
-        walmartConnectAdvertisingCost: summary.walmartConnectAdvertisingCost,
-        advertisingCost: summary.advertisingCost,
-        cogs: summary.cogs,
-        grossProfit: summary.grossProfit,
-        netProfit: summary.netProfit,
-        grossMarginPercent: summary.grossMarginPercent,
-        netMarginPercent: summary.netMarginPercent,
-        profitPerUnit: summary.profitPerUnit,
-        missingCogsUnits: summary.missingCogsUnits
+        units: displaySummary.quantity,
+        refunds: displaySummary.refunds,
+        salesRefunds: displaySummary.salesRefunds,
+        marketplaceFees: displaySummary.marketplaceFees,
+        commissionFees: displaySummary.commissionFees,
+        fulfillmentFees: displaySummary.fulfillmentFees,
+        shippingFees: displaySummary.shippingFees,
+        storageFees: displaySummary.storageFees,
+        returnFees: displaySummary.returnFees,
+        adjustmentFees: displaySummary.adjustmentFees,
+        otherFees: displaySummary.otherFees,
+        otherWalmartFeesAndAdjustments: getOtherWalmartFeesAndAdjustments(marketplaceSummary),
+        otherFeeCategoryBreakdown: displaySummary.otherFeeCategoryBreakdown,
+        semAdvertisingCost: marketplaceSummary.semAdvertisingCost,
+        walmartConnectAdvertisingCost: displaySummary.walmartConnectAdvertisingCost,
+        advertisingCost: displaySummary.advertisingCost,
+        cogs: displaySummary.cogs,
+        grossProfit: displaySummary.grossProfit,
+        netProfit: displaySummary.netProfit,
+        grossMarginPercent: displaySummary.grossMarginPercent,
+        netMarginPercent: displaySummary.netMarginPercent,
+        profitPerUnit: displaySummary.profitPerUnit,
+        missingCogsUnits: displaySummary.missingCogsUnits
       };
     }
 
@@ -946,6 +1091,7 @@ function calculateParentMonthlyComparisonRows(
       from: period.start,
       to: period.end
     });
+    const productPeriodAdCosts = filterProductAttributedAdvertisingCosts(periodAdCosts);
     const periodSuppressedDetailLines = suppressedDetailLines.filter(
       (line) => line.orderDate && line.orderDate >= period.start && line.orderDate <= period.end
     );
@@ -957,14 +1103,25 @@ function calculateParentMonthlyComparisonRows(
       from: period.start,
       to: period.end
     });
-    const parentRows = calculateProfitRows(
+    const productPeriodFeeAdjustments = filterProductAttributableFees(periodFeeAdjustments);
+    const productPeriodRefundAdjustments = filterProductAttributableRefunds(periodRefundAdjustments);
+    const marketplaceRows = calculateProfitRows(
       periodLines,
       "parentSku",
       periodAdCosts,
       periodFeeAdjustments,
       periodRefundAdjustments
     );
+    const marketplaceSummary = summarizeProfit(marketplaceRows);
+    const parentRows = calculateProfitRows(
+      periodLines,
+      "parentSku",
+      productPeriodAdCosts,
+      productPeriodFeeAdjustments,
+      productPeriodRefundAdjustments
+    );
     const summary = summarizeProfit(parentRows);
+    const displaySummary = useMarketplaceFinancialSummary ? marketplaceSummary : summary;
 
     return {
       monthKey: period.key,
@@ -973,30 +1130,33 @@ function calculateParentMonthlyComparisonRows(
       from: period.start.toISOString(),
       to: period.end.toISOString(),
       salesSource: summarizeSalesSource(periodLines, periodSuppressedDetailLines),
-      netRevenue: summary.netRevenue,
+      grossRevenue: displaySummary.grossRevenue,
+      netRevenue: displaySummary.netRevenue,
       netRevenueChangePercent: null,
       orderCount: calculateOrderCount(periodLines),
-      units: summary.quantity,
-      refunds: summary.refunds,
-      salesRefunds: summary.salesRefunds,
-      marketplaceFees: summary.marketplaceFees,
-      commissionFees: summary.commissionFees,
-      fulfillmentFees: summary.fulfillmentFees,
-      shippingFees: summary.shippingFees,
-      storageFees: summary.storageFees,
-      returnFees: summary.returnFees,
-      adjustmentFees: summary.adjustmentFees,
-      otherFees: summary.otherFees,
-      semAdvertisingCost: summary.semAdvertisingCost,
-      walmartConnectAdvertisingCost: summary.walmartConnectAdvertisingCost,
-      advertisingCost: summary.advertisingCost,
-      cogs: summary.cogs,
-      grossProfit: summary.grossProfit,
-      netProfit: summary.netProfit,
-      grossMarginPercent: summary.grossMarginPercent,
-      netMarginPercent: summary.netMarginPercent,
-      profitPerUnit: summary.profitPerUnit,
-      missingCogsUnits: summary.missingCogsUnits
+      units: displaySummary.quantity,
+      refunds: displaySummary.refunds,
+      salesRefunds: displaySummary.salesRefunds,
+      marketplaceFees: displaySummary.marketplaceFees,
+      commissionFees: displaySummary.commissionFees,
+      fulfillmentFees: displaySummary.fulfillmentFees,
+      shippingFees: displaySummary.shippingFees,
+      storageFees: displaySummary.storageFees,
+      returnFees: displaySummary.returnFees,
+      adjustmentFees: displaySummary.adjustmentFees,
+      otherFees: displaySummary.otherFees,
+      otherWalmartFeesAndAdjustments: getOtherWalmartFeesAndAdjustments(marketplaceSummary),
+      otherFeeCategoryBreakdown: displaySummary.otherFeeCategoryBreakdown,
+      semAdvertisingCost: marketplaceSummary.semAdvertisingCost,
+      walmartConnectAdvertisingCost: displaySummary.walmartConnectAdvertisingCost,
+      advertisingCost: displaySummary.advertisingCost,
+      cogs: displaySummary.cogs,
+      grossProfit: displaySummary.grossProfit,
+      netProfit: displaySummary.netProfit,
+      grossMarginPercent: displaySummary.grossMarginPercent,
+      netMarginPercent: displaySummary.netMarginPercent,
+      profitPerUnit: displaySummary.profitPerUnit,
+      missingCogsUnits: displaySummary.missingCogsUnits
     };
   });
 
@@ -1015,7 +1175,7 @@ function summarizeSalesSource(
   lines: ProfitLineInput[],
   suppressedDetailLines: ProfitLineInput[] = []
 ): PnlSalesSourceSummary {
-  const hasDailyItemSales = lines.some((line) => line.salesSource === "item_sales_daily_summary");
+  const hasPoReport = lines.some((line) => line.salesSource === "po_report");
   const suppressedDetailGmv = roundMoney(
     suppressedDetailLines.reduce(
       (sum, line) =>
@@ -1024,7 +1184,7 @@ function summarizeSalesSource(
     )
   );
   const note =
-    "P&L sales use daily Walmart Item Sales reports only. PO/order rows can be imported for audit, but they do not drive dashboard sales.";
+    "P&L sales use Walmart PO reports for sales, units, orders, SKU, product, fulfillment type, and order date. Product P&L includes only financial rows that can be attributed directly to a SKU or parent.";
 
   if (!lines.length) {
     return {
@@ -1037,10 +1197,10 @@ function summarizeSalesSource(
     };
   }
 
-  if (hasDailyItemSales) {
+  if (hasPoReport) {
     return {
-      kind: "item_sales_daily_summary",
-      label: "Sales source: Walmart daily Item Sales",
+      kind: "po_report",
+      label: "Sales source: Walmart PO reports",
       note,
       summaryMonthCount: lines.length,
       suppressedDetailRowCount: suppressedDetailLines.length,
@@ -1050,7 +1210,7 @@ function summarizeSalesSource(
 
   return {
     kind: "none",
-    label: "Sales source: No daily Item Sales rows",
+    label: "Sales source: No PO sales rows",
     note,
     summaryMonthCount: 0,
     suppressedDetailRowCount: suppressedDetailLines.length,
@@ -1108,6 +1268,12 @@ function buildDataQualityLabels(
   return labels.length ? labels : ["Complete"];
 }
 
+function getOtherWalmartFeesAndAdjustments(summary: ReturnType<typeof summarizeProfit>) {
+  return roundMoney(
+    summary.marketplaceFees - summary.commissionFees - summary.fulfillmentFees
+  );
+}
+
 function filterAdvertisingCostsByDateRange(
   advertisingCosts: ProfitAdvertisingCostInput[],
   dateRange: Required<PnlDateRange>
@@ -1125,33 +1291,30 @@ function filterFeesByDateRange(
 function prepareFeesForDateRange(
   fees: ProfitFeeInput[],
   dateRange?: PnlDateRange,
-  activeLines: ProfitLineInput[] = []
+  _activeLines: ProfitLineInput[] = []
 ): ProfitFeeInput[] {
-  const summaryMonthKeys = getSelectedSummaryMonthKeys(activeLines);
-
   return fees
-    .map((fee) => prepareFeeForDateRange(fee, dateRange, summaryMonthKeys))
+    .map((fee) => prepareFeeForDateRange(fee, dateRange))
     .filter((fee): fee is ProfitFeeInput => Boolean(fee));
 }
 
 function prepareFeeForDateRange(
   fee: ProfitFeeInput,
-  dateRange?: PnlDateRange,
-  summaryMonthKeys: Set<string> = new Set()
+  dateRange?: PnlDateRange
 ) {
   if (!dateRange?.from && !dateRange?.to) {
     return fee;
   }
 
   if (isSettlementDerivedCommissionFee(fee)) {
-    if (shouldSuppressSettlementCommissionForSummaryMonth(fee, summaryMonthKeys)) {
-      return null;
-    }
-
     return prepareSettlementDerivedCommissionForDateRange(fee, dateRange).fee;
   }
 
   if (!isWalmartSettlementMetadata(fee.metadata)) {
+    return isDateInRange(fee.postedAt, dateRange) ? fee : null;
+  }
+
+  if (isTransactionPostedSettlementMetadata(fee.metadata)) {
     return isDateInRange(fee.postedAt, dateRange) ? fee : null;
   }
 
@@ -1247,6 +1410,10 @@ function prepareRefundForDateRange(
   }
 
   if (!isWalmartSettlementMetadata(refund.metadata)) {
+    return isDateInRange(refund.refundDate, dateRange) ? refund : null;
+  }
+
+  if (isTransactionPostedSettlementMetadata(refund.metadata)) {
     return isDateInRange(refund.refundDate, dateRange) ? refund : null;
   }
 
@@ -1553,11 +1720,12 @@ function getParentSkuBySellerSku(items: ProfitLineItem[]) {
 async function addCatalogParentSkus(
   organizationId: string,
   parentSkuBySellerSku: Map<string, string | null>,
-  sellerSkus: string[]
+  sellerSkus: string[],
+  marketplace?: string
 ) {
-  const missingSkus = sellerSkus.filter((sku) => !parentSkuBySellerSku.get(sku));
+  const lookupSkus = uniqueStrings(sellerSkus);
 
-  if (!missingSkus.length) {
+  if (!lookupSkus.length) {
     return;
   }
 
@@ -1566,11 +1734,12 @@ async function addCatalogParentSkus(
   const orderItems: Array<{ sellerSku: string; parentSku: string | null }> = [];
   const costRecords: Array<{ sellerSku: string; parentSku: string | null }> = [];
 
-  for (const skuChunk of chunkArray(missingSkus, PRISMA_IN_FILTER_CHUNK_SIZE)) {
+  for (const skuChunk of chunkArray(lookupSkus, PRISMA_IN_FILTER_CHUNK_SIZE)) {
     const [listingChunk, productChunk, orderItemChunk, costRecordChunk] = await Promise.all([
       prisma.listing.findMany({
         where: {
           organizationId,
+          ...(marketplace ? { marketplace } : {}),
           sellerSku: { in: skuChunk },
           parentSku: { not: null }
         },
@@ -1587,6 +1756,7 @@ async function addCatalogParentSkus(
       prisma.salesOrderItem.findMany({
         where: {
           organizationId,
+          ...(marketplace ? { marketplace } : {}),
           sellerSku: { in: skuChunk },
           parentSku: { not: null }
         },
@@ -1596,6 +1766,7 @@ async function addCatalogParentSkus(
       prisma.costRecord.findMany({
         where: {
           organizationId,
+          ...(marketplace ? { marketplace } : {}),
           sellerSku: { in: skuChunk },
           parentSku: { not: null }
         },
@@ -1610,14 +1781,17 @@ async function addCatalogParentSkus(
     costRecords.push(...costRecordChunk);
   }
 
+  const listingMappedSkus = new Set<string>();
+
   for (const listing of listings) {
     if (listing.parentSku) {
       parentSkuBySellerSku.set(listing.sellerSku, listing.parentSku);
+      listingMappedSkus.add(listing.sellerSku);
     }
   }
 
   for (const product of products) {
-    if (product.internalSku && product.parentSku && !parentSkuBySellerSku.get(product.internalSku)) {
+    if (product.internalSku && product.parentSku && !listingMappedSkus.has(product.internalSku)) {
       parentSkuBySellerSku.set(product.internalSku, product.parentSku);
     }
   }
@@ -1924,6 +2098,21 @@ function toNumber(value: unknown) {
   return 0;
 }
 
+function getSalesSourceFromOrderItem(item: ProfitLineItem) {
+  return getPoSalesSourceFromOrderItem({
+    orderStatus: item.order.status,
+    poOrderStatus: getDirectPoOrderStatus(item),
+    lineMetadata: item.fees
+      .map((fee) => toRecord(fee.metadata))
+      .filter((metadata): metadata is Record<string, unknown> => Boolean(metadata))
+  });
+}
+
+function getDirectPoOrderStatus(item: ProfitLineItem) {
+  const value = (item as ProfitLineItem & { poOrderStatus?: unknown }).poOrderStatus;
+  return typeof value === "string" ? value : null;
+}
+
 function getImportedOrderCount(
   fees: Array<{ metadata: unknown }>
 ) {
@@ -1946,17 +2135,14 @@ function getImportedOrderCount(
   return undefined;
 }
 
-function getItemSalesSummarySalesRefundsFromFees(item: ProfitLineItem) {
-  if (!isDailyItemSalesSummaryStatus(item.order.status) && !isAggregateSummaryStatus(item.order.status)) {
+function getSupportedLineSalesRefundsFromFees(item: ProfitLineItem) {
+  const salesSource = getSalesSourceFromOrderItem(item);
+
+  if (salesSource !== "po_report") {
     return 0;
   }
 
-  return item.fees.reduce((total, fee) => {
-    const metadata = toRecord(fee.metadata);
-    const refundSalesValue = metadata?.refundSales;
-
-    return total + readMetadataNumber(refundSalesValue);
-  }, 0);
+  return 0;
 }
 
 function getLineBrand(item: ProfitLineItem) {
@@ -2044,6 +2230,10 @@ function isWalmartSettlementMetadata(metadata: Record<string, unknown> | undefin
   return readMetadataText(metadata, "source") === "walmart_payments_new";
 }
 
+function isTransactionPostedSettlementMetadata(metadata: Record<string, unknown> | undefined) {
+  return readMetadataText(metadata, "reportingDateSource") === "transaction_posted_timestamp";
+}
+
 function isDateInRange(date: Date | null | undefined, dateRange: SettlementDateRange) {
   if (!date) {
     return false;
@@ -2060,11 +2250,18 @@ function readMetadataText(value: unknown, key: string) {
 }
 
 function isIncludedAdvertisingCost(cost: { source: string; metadata: unknown }) {
+  if (
+    cost.source === "walmart_seller_center_sem" &&
+    readMetadataText(cost.metadata, "source") === "walmart_payments_new"
+  ) {
+    return false;
+  }
+
   if (cost.source !== "walmart_seller_center_sem") {
     return true;
   }
 
-  return readMetadataText(cost.metadata, "source") === "walmart_payments_new";
+  return true;
 }
 
 function readMetadataNumber(value: unknown) {

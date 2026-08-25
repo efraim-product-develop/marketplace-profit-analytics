@@ -6,6 +6,10 @@ import {
   normalizePnlDateRange
 } from "./calendar-dates.ts";
 import {
+  filterProductAttributedAdvertisingCosts,
+  buildProductAttributionDiagnostics
+} from "./product-attribution.ts";
+import {
   getSettlementCommissionDiagnostic,
   isSettlementDerivedCommissionFee,
   prepareSettlementDerivedCommissionForDateRange
@@ -15,6 +19,7 @@ import type {
   PnlDateRange,
   PnlSalesSourceSummary,
   PnlSettlementAllocationSummary,
+  ProductAttributionDiagnostics,
   ProfitAdvertisingCostInput,
   ProfitFeeInput,
   ProfitLineInput,
@@ -30,13 +35,14 @@ const SETTLEMENT_SOURCE = "walmart_payments_new";
 const allocator = new SettlementPeriodAllocator();
 
 export type DailyPnlGroupBy = "sellerSku" | "parentSku";
+export type SellerCenterSemMode = "include" | "summaryOnly" | "exclude";
 
 export type DailyPnlQualityStatus =
   | "Complete"
   | "Missing daily ads"
   | "Settlement dates incomplete"
   | "Missing COGS"
-  | "Missing daily Item Sales";
+  | "Missing PO sales";
 
 export type DailyPnlDiagnostic = {
   sales: {
@@ -44,7 +50,7 @@ export type DailyPnlDiagnostic = {
     orderDateStart: string | null;
     orderDateEnd: string | null;
     gmvIncluded: number;
-    monthlySummaryRowsIgnored: number;
+    obsoleteSalesRowsIgnored: number;
   };
   cogs: {
     orderLinesCosted: number;
@@ -82,11 +88,16 @@ export type DailyPnlResult = {
   summary: ReturnType<typeof summarizeProfit>;
   salesSource: PnlSalesSourceSummary;
   settlementAllocation: PnlSettlementAllocationSummary;
+  attributionDiagnostics: ProductAttributionDiagnostics;
   missingDataSources: DailyPnlQualityStatus[];
   sourceMetadata: {
     businessTimeZone: "UTC";
     sourceGrain: "daily";
-    monthlySummaryRowsIgnored: number;
+    expectedDates: string[];
+    importedDates: string[];
+    missingDates: string[];
+    coverageComplete: boolean;
+    obsoleteSalesRowsIgnored: number;
     monthlyWalmartConnectRowsIgnored: number;
     postingDateFallbackCount: number;
     settlementRowsWithMissingPeriodDates: number;
@@ -99,6 +110,13 @@ export type DailyPnlResult = {
   suppressedDetailLines: ProfitLineInput[];
 };
 
+type DailySalesCoverage = {
+  expectedDates: string[];
+  importedDates: string[];
+  missingDates: string[];
+  coverageComplete: boolean;
+};
+
 export function calculateDailyPnl({
   lines,
   suppressedDetailLines = [],
@@ -106,7 +124,8 @@ export function calculateDailyPnl({
   feeAdjustments = [],
   refundAdjustments = [],
   dateRange,
-  groupBy
+  groupBy,
+  sellerCenterSemMode = "include"
 }: {
   organizationId: string;
   marketplace: string;
@@ -121,36 +140,57 @@ export function calculateDailyPnl({
   refundAdjustments?: ProfitRefundInput[];
   dateRange: PnlDateRange;
   groupBy: DailyPnlGroupBy;
+  sellerCenterSemMode?: SellerCenterSemMode;
 }): DailyPnlResult {
   const normalizedRange = normalizePnlDateRange(dateRange);
   const dailyRange = normalizedRange ? { from: normalizedRange.from, to: normalizedRange.to } : dateRange;
   const dailyLines = lines.filter(
     (line) =>
-      line.salesSource === "item_sales_daily_summary" &&
+      isSupportedDailySalesLine(line) &&
       Boolean(line.orderDate) &&
       isDateWithinInclusiveRange(line.orderDate, dailyRange)
   );
-  const monthlySummaryRowsIgnored = lines.filter(
+  const obsoleteSalesRowsIgnored = lines.filter(
     (line) =>
-      line.salesSource !== "item_sales_daily_summary" &&
+      !isSupportedDailySalesLine(line) &&
       Boolean(line.orderDate) &&
       isDateWithinInclusiveRange(line.orderDate, dailyRange)
   ).length;
+  const coverage = buildDailySalesCoverage(dailyRange, dailyLines);
   const preparedFees = feeAdjustments
     .map((fee) => prepareDailyFee(fee, dailyRange))
     .filter((fee): fee is ProfitFeeInput => Boolean(fee));
-  const adPreparation = prepareDailyAdvertisingCosts(advertisingCosts, dailyRange);
   const preparedRefunds = refundAdjustments
     .map((refund) => prepareDailyRefund(refund, dailyRange))
     .filter((refund): refund is ProfitRefundInput => Boolean(refund));
+  const adPreparation = prepareDailyAdvertisingCosts(advertisingCosts, dailyRange);
+  const rowAdvertisingCosts = filterSellerCenterSemAdvertisingCosts(
+    adPreparation.costs,
+    sellerCenterSemMode === "exclude" || sellerCenterSemMode === "summaryOnly"
+  );
+  const summaryAdvertisingCosts = filterSellerCenterSemAdvertisingCosts(
+    adPreparation.costs,
+    sellerCenterSemMode === "exclude"
+  );
   const rows = calculateProfitRows(
     dailyLines,
     groupBy,
-    adPreparation.costs,
+    rowAdvertisingCosts,
     preparedFees,
     preparedRefunds
   );
-  const summary = summarizeProfit(rows);
+  const summary =
+    summaryAdvertisingCosts === rowAdvertisingCosts
+      ? summarizeProfit(rows)
+      : summarizeProfit(
+          calculateProfitRows(
+            dailyLines,
+            groupBy,
+            summaryAdvertisingCosts,
+            preparedFees,
+            preparedRefunds
+          )
+        );
   const settlementAllocation = summarizeSettlementAllocation([
     ...preparedFees,
     ...adPreparation.costs,
@@ -159,15 +199,24 @@ export function calculateDailyPnl({
   const sourceMetadata = {
     businessTimeZone: "UTC" as const,
     sourceGrain: "daily" as const,
-    monthlySummaryRowsIgnored,
+    expectedDates: coverage.expectedDates,
+    importedDates: coverage.importedDates,
+    missingDates: coverage.missingDates,
+    coverageComplete: coverage.coverageComplete,
+    obsoleteSalesRowsIgnored,
     monthlyWalmartConnectRowsIgnored: adPreparation.monthlyWalmartConnectRowsIgnored,
     postingDateFallbackCount: settlementAllocation.fallbackCount,
     settlementRowsWithMissingPeriodDates: settlementAllocation.missingPeriodMetadataCount
   };
+  const attributionDiagnostics = buildProductAttributionDiagnostics({
+    feeAdjustments: preparedFees,
+    refundAdjustments: preparedRefunds,
+    advertisingCosts: adPreparation.costs
+  });
   const missingDataSources = buildMissingDataSources({
     summary,
     dailyLines,
-    monthlySummaryRowsIgnored,
+    coverage,
     monthlyWalmartConnectRowsIgnored: adPreparation.monthlyWalmartConnectRowsIgnored,
     settlementAllocation
   });
@@ -175,23 +224,31 @@ export function calculateDailyPnl({
   return {
     rows,
     summary,
-    salesSource: buildDailySalesSourceSummary(dailyLines, suppressedDetailLines, monthlySummaryRowsIgnored),
+    salesSource: buildDailySalesSourceSummary(dailyLines, suppressedDetailLines, obsoleteSalesRowsIgnored),
     settlementAllocation,
     missingDataSources,
+    attributionDiagnostics,
     sourceMetadata,
     diagnostic: buildDiagnostic({
       lines: dailyLines,
       fees: preparedFees,
-      ads: adPreparation.costs,
-      monthlySummaryRowsIgnored,
+      ads: summaryAdvertisingCosts,
+      obsoleteSalesRowsIgnored,
       monthlyWalmartConnectRowsIgnored: adPreparation.monthlyWalmartConnectRowsIgnored
     }),
-    advertisingCosts: adPreparation.costs,
+    advertisingCosts: summaryAdvertisingCosts,
     feeAdjustments: preparedFees,
     refundAdjustments: preparedRefunds,
     lines: dailyLines,
     suppressedDetailLines
   };
+}
+
+function filterSellerCenterSemAdvertisingCosts(
+  costs: ProfitAdvertisingCostInput[],
+  shouldExclude: boolean
+) {
+  return shouldExclude ? filterProductAttributedAdvertisingCosts(costs) : costs;
 }
 
 export function isDailyCapableWalmartConnectCost(cost: ProfitAdvertisingCostInput) {
@@ -208,12 +265,59 @@ export function isDailyCapableWalmartConnectCost(cost: ProfitAdvertisingCostInpu
   );
 }
 
+function buildDailySalesCoverage(
+  dateRange: PnlDateRange,
+  lines: ProfitLineInput[]
+): DailySalesCoverage {
+  const normalizedRange = normalizePnlDateRange(dateRange);
+
+  if (!normalizedRange) {
+    return {
+      expectedDates: [],
+      importedDates: [],
+      missingDates: [],
+      coverageComplete: false
+    };
+  }
+
+  const expectedDates = getDateKeysInRange(normalizedRange.from, normalizedRange.to);
+  const importedDateSet = new Set(
+    lines.map((line) => businessDateKey(line.orderDate)).filter((date): date is string => Boolean(date))
+  );
+  const importedDates = expectedDates.filter((date) => importedDateSet.has(date));
+  const missingDates = expectedDates.filter((date) => !importedDateSet.has(date));
+
+  return {
+    expectedDates,
+    importedDates,
+    missingDates,
+    coverageComplete: missingDates.length === 0
+  };
+}
+
+function getDateKeysInRange(from: Date, to: Date) {
+  const keys: string[] = [];
+  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+  const end = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()));
+
+  while (cursor <= end) {
+    keys.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return keys;
+}
+
 function prepareDailyFee(fee: ProfitFeeInput, dateRange: PnlDateRange) {
   if (isSettlementDerivedCommissionFee(fee)) {
     return prepareSettlementDerivedCommissionForDateRange(fee, dateRange).fee;
   }
 
   if (!isSettlementMetadata(fee.metadata)) {
+    return isDateWithinInclusiveRange(fee.postedAt, dateRange) ? fee : null;
+  }
+
+  if (isTransactionPostedSettlementMetadata(fee.metadata)) {
     return isDateWithinInclusiveRange(fee.postedAt, dateRange) ? fee : null;
   }
 
@@ -235,6 +339,36 @@ function prepareDailyFee(fee: ProfitFeeInput, dateRange: PnlDateRange) {
     ...fee,
     amount: allocation.amount,
     metadata: withSettlementAllocationMetadata(fee.metadata, allocation)
+  };
+}
+
+function prepareDailyRefund(refund: ProfitRefundInput, dateRange: PnlDateRange) {
+  if (!isSettlementMetadata(refund.metadata)) {
+    return isDateWithinInclusiveRange(refund.refundDate, dateRange) ? refund : null;
+  }
+
+  if (isTransactionPostedSettlementMetadata(refund.metadata)) {
+    return isDateWithinInclusiveRange(refund.refundDate, dateRange) ? refund : null;
+  }
+
+  const allocation = allocator.allocateForRange(
+    {
+      amount: refund.amount,
+      settlementPeriodStart: readMetadataText(refund.metadata, "periodStartDate"),
+      settlementPeriodEnd: readMetadataText(refund.metadata, "periodEndDate"),
+      postingDate: refund.refundDate
+    },
+    dateRange
+  );
+
+  if (allocation.amount === 0) {
+    return null;
+  }
+
+  return {
+    ...refund,
+    amount: allocation.amount,
+    metadata: withSettlementAllocationMetadata(refund.metadata, allocation)
   };
 }
 
@@ -285,36 +419,10 @@ function prepareDailyAdvertisingCost(cost: ProfitAdvertisingCostInput, dateRange
   };
 }
 
-function prepareDailyRefund(refund: ProfitRefundInput, dateRange: PnlDateRange) {
-  if (!isSettlementMetadata(refund.metadata)) {
-    return isDateWithinInclusiveRange(refund.refundDate, dateRange) ? refund : null;
-  }
-
-  const allocation = allocator.allocateForRange(
-    {
-      amount: refund.amount,
-      settlementPeriodStart: readMetadataText(refund.metadata, "periodStartDate"),
-      settlementPeriodEnd: readMetadataText(refund.metadata, "periodEndDate"),
-      postingDate: refund.refundDate
-    },
-    dateRange
-  );
-
-  if (allocation.amount === 0) {
-    return null;
-  }
-
-  return {
-    ...refund,
-    amount: allocation.amount,
-    metadata: withSettlementAllocationMetadata(refund.metadata, allocation)
-  };
-}
-
 function buildDailySalesSourceSummary(
   lines: ProfitLineInput[],
   suppressedDetailLines: ProfitLineInput[],
-  monthlySummaryRowsIgnored: number
+  obsoleteSalesRowsIgnored: number
 ): PnlSalesSourceSummary {
   const suppressedDetailGmv = roundMoney(
     suppressedDetailLines.reduce(
@@ -323,13 +431,14 @@ function buildDailySalesSourceSummary(
     )
   );
   const note =
-    "P&L sales use daily Walmart Item Sales reports by report date. PO/order rows are held for audit and do not drive dashboard sales.";
+    "P&L sales use Walmart PO reports for sales, units, orders, SKU, product, fulfillment type, and order date. Product P&L includes only financial rows that can be attributed directly to a SKU or parent.";
+  const hasPoReport = lines.some((line) => line.salesSource === "po_report");
 
   return {
-    kind: lines.length ? "item_sales_daily_summary" : "none",
-    label: lines.length ? "Sales source: Walmart daily Item Sales" : "Sales source: No daily Item Sales rows",
+    kind: hasPoReport ? "po_report" : "none",
+    label: hasPoReport ? "Sales source: Walmart PO reports" : "Sales source: No PO sales rows",
     note,
-    summaryMonthCount: monthlySummaryRowsIgnored > 0 ? 1 : 0,
+    summaryMonthCount: obsoleteSalesRowsIgnored,
     suppressedDetailRowCount: suppressedDetailLines.length,
     suppressedDetailGmv
   };
@@ -338,20 +447,20 @@ function buildDailySalesSourceSummary(
 function buildMissingDataSources({
   summary,
   dailyLines,
-  monthlySummaryRowsIgnored,
+  coverage,
   monthlyWalmartConnectRowsIgnored,
   settlementAllocation
 }: {
   summary: ReturnType<typeof summarizeProfit>;
   dailyLines: ProfitLineInput[];
-  monthlySummaryRowsIgnored: number;
+  coverage: DailySalesCoverage;
   monthlyWalmartConnectRowsIgnored: number;
   settlementAllocation: PnlSettlementAllocationSummary;
 }) {
   const statuses: DailyPnlQualityStatus[] = [];
 
-  if (!dailyLines.length && monthlySummaryRowsIgnored > 0) {
-    statuses.push("Missing daily Item Sales");
+  if (!coverage.coverageComplete) {
+    statuses.push("Missing PO sales");
   }
 
   if (monthlyWalmartConnectRowsIgnored > 0) {
@@ -369,17 +478,21 @@ function buildMissingDataSources({
   return statuses.length ? statuses : (["Complete"] satisfies DailyPnlQualityStatus[]);
 }
 
+function isSupportedDailySalesLine(line: ProfitLineInput) {
+  return line.salesSource === "po_report";
+}
+
 function buildDiagnostic({
   lines,
   fees,
   ads,
-  monthlySummaryRowsIgnored,
+  obsoleteSalesRowsIgnored,
   monthlyWalmartConnectRowsIgnored
 }: {
   lines: ProfitLineInput[];
   fees: ProfitFeeInput[];
   ads: ProfitAdvertisingCostInput[];
-  monthlySummaryRowsIgnored: number;
+  obsoleteSalesRowsIgnored: number;
   monthlyWalmartConnectRowsIgnored: number;
 }): DailyPnlDiagnostic {
   const lineDates = lines.map((line) => line.orderDate).filter((date): date is Date => Boolean(date));
@@ -398,7 +511,7 @@ function buildDiagnostic({
           0
         )
       ),
-      monthlySummaryRowsIgnored
+      obsoleteSalesRowsIgnored
     },
     cogs: {
       orderLinesCosted: lines.filter((line) => !line.missingCogs).length,
@@ -520,6 +633,10 @@ function withSettlementAllocationMetadata(
 
 function isSettlementMetadata(metadata: Record<string, unknown> | undefined) {
   return readMetadataText(metadata, "source") === SETTLEMENT_SOURCE;
+}
+
+function isTransactionPostedSettlementMetadata(metadata: Record<string, unknown> | undefined) {
+  return readMetadataText(metadata, "reportingDateSource") === "transaction_posted_timestamp";
 }
 
 function isCommissionFee(fee: ProfitFeeInput | ProfitAdvertisingCostInput): fee is ProfitFeeInput {

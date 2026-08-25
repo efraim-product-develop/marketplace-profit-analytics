@@ -161,7 +161,7 @@ function printPlan({ organizations, marketplace, counts }) {
   console.table(counts);
   console.log("");
   console.log("Will keep: COGS, COGS history, products, listings, settlements, ads, settings.");
-  console.log("Will delete: PO/order sales rows, Item Sales monthly summary rows, sales import history, sales import preview/history rows.");
+  console.log("Will delete: PO/order sales rows, archived retired sales-summary rows, sales import history, sales import preview/history rows.");
 }
 
 function readArgValue(name) {

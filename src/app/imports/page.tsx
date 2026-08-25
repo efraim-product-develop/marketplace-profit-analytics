@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Route } from "next";
 import {
   ArrowRight,
+  ClipboardCheck,
   FileSpreadsheet,
   Megaphone,
   PackageOpen,
@@ -18,6 +19,12 @@ const importOptions: Array<{
   icon: typeof UploadCloud;
 }> = [
   {
+    href: "/imports/audit" as Route,
+    title: "Data quality audit",
+    description: "Check whether PO, settlement, SEM, Walmart Connect, and COGS data are complete for a period.",
+    icon: ClipboardCheck
+  },
+  {
     href: "/cogs/upload",
     title: "COGS",
     description: "Upload effective-dated SKU costs for P&L calculations.",
@@ -26,13 +33,13 @@ const importOptions: Array<{
   {
     href: "/imports/sales",
     title: "Sales reports",
-    description: "Import daily Walmart Item Sales reports as the P&L sales source.",
+    description: "Import Walmart PO reports as the Walmart sales source.",
     icon: ReceiptText
   },
   {
     href: "/imports/settlements",
     title: "Settlement reports",
-    description: "Import Walmart payment reports for fulfillment, fees, refunds, and SEM.",
+    description: "Import Walmart payment reports for payouts, refunds, fulfillment, and fees.",
     icon: FileSpreadsheet
   },
   {
@@ -42,9 +49,15 @@ const importOptions: Array<{
     icon: Megaphone
   },
   {
+    href: "/imports/advertising",
+    title: "Seller Center SEM",
+    description: "Import Walmart Seller Center campaign-level daily SEM reports.",
+    icon: Megaphone
+  },
+  {
     href: "/imports/inventory",
-    title: "Inventory reports",
-    description: "Upload inventory reports as new marketplace parsers are added.",
+    title: "SKU / Parent Mapping",
+    description: "Import Walmart Item Sales only to map SKUs to parent products.",
     icon: PackageOpen
   }
 ];

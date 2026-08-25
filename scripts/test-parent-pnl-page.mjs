@@ -179,7 +179,7 @@ const tests = [
       assert.match(csv, /Period comparison/);
       assert.match(csv, /Parent rollup/);
       assert.match(csv, /SKU detail/);
-      assert.match(csv, /Item Sales/);
+      assert.match(csv, /PO Reports/);
     }
   },
   {
@@ -270,17 +270,16 @@ const tests = [
     }
   },
   {
-    name: "labels source and reconciliation indicators",
+    name: "labels PO source indicators",
     run() {
-      assert.equal(getParentPnlSourceLabel("item_sales_daily_summary"), "Item Sales");
-      assert.equal(getParentPnlSourceLabel("item_sales_monthly_summary"), "Legacy Item Sales");
-      assert.equal(getParentPnlSourceLabel("po_order_detail"), "PO Audit");
+      assert.equal(getParentPnlSourceLabel("po_report"), "PO Reports");
+      assert.equal(getParentPnlSourceLabel("unsupported_source"), "No Sales");
       assert.match(
-        getParentPnlReconciliationLabel(buildSalesSourceSummary({ kind: "item_sales_daily_summary" })),
-        /daily Walmart Item Sales/
+        getParentPnlReconciliationLabel(buildSalesSourceSummary({ kind: "po_report" })),
+        /PO reports/
       );
       assert.match(
-        getParentPnlReconciliationLabel(buildSalesSourceSummary({ kind: "po_order_detail" }), 3),
+        getParentPnlReconciliationLabel(buildSalesSourceSummary({ kind: "none" }), 3),
         /COGS review/
       );
     }
@@ -323,9 +322,9 @@ for (const test of tests) {
 
 function buildSalesSourceSummary(overrides = {}) {
   return {
-    kind: "item_sales_daily_summary",
-    label: "Sales source: Walmart daily Item Sales",
-    note: "Daily Item Sales active.",
+    kind: "po_report",
+    label: "Sales source: Walmart PO reports",
+    note: "PO report sales active.",
     summaryMonthCount: 0,
     suppressedDetailRowCount: 0,
     suppressedDetailGmv: 0,
@@ -338,7 +337,7 @@ function buildProfitRow(overrides = {}) {
     marketplace: "walmart",
     parentSku: "PARENT-1",
     sellerSku: "SKU-1",
-    salesSource: "item_sales_daily_summary",
+    salesSource: "po_report",
     label: "walmart:PARENT-1",
     quantity: 5,
     grossRevenue: 100,
@@ -355,6 +354,7 @@ function buildProfitRow(overrides = {}) {
     returnFees: 0,
     adjustmentFees: 0,
     otherFees: 0,
+    otherFeeCategoryBreakdown: [],
     walmartConnectAdvertisingCost: 1,
     semAdvertisingCost: 2,
     advertisingCost: 3,

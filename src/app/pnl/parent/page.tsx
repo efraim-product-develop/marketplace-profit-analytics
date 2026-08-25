@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Route } from "next";
 import { KpiCard } from "@/components/kpi-card";
 import { PageHeader } from "@/components/page-header";
-import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
+import { formatCurrency, formatDate, formatNumber, formatPercent } from "@/lib/format";
 import {
   buildParentPnlQueryString,
   getParentPnlReconciliationLabel,
@@ -22,7 +22,9 @@ import {
 } from "@/server/pnl/periods";
 import type {
   ParentSkuFilterOption,
-  PnlSalesSourceSummary
+  ProductAttributionDiagnostics,
+  PnlSalesSourceSummary,
+  SettlementPayoutHistoryRow
 } from "@/server/pnl/types";
 import { ParentPnlTable } from "./parent-pnl-table";
 
@@ -44,9 +46,11 @@ export default async function ParentPnlPage({
     summary,
     salesSource,
     settlementAllocation,
+    attributionDiagnostics,
     dataQuality,
     diagnostic,
     settlementCommissionDiagnostic,
+    settlementPayouts,
     orderDrilldownRows
   } = await getParentPnl({
     dateRange: parsed.filters.dateRange,
@@ -59,13 +63,14 @@ export default async function ParentPnlPage({
     ...(parsed.selectedSku ? { sku: parsed.selectedSku } : {})
   });
   const exportQueryString = buildParentPnlQueryString(parsed.formValues);
+  const isMarketplaceSummary = !parsed.filters.parentSku;
 
   return (
     <>
       <PageHeader
         eyebrow="Profit"
         title={`${marketplaceTitle} Parent P&L`}
-        description="Roll up SKU-level sales, fees, costs, and ad spend by parent SKU."
+        description="Marketplace profit summary with parent SKU rollup below."
         action={
           <a
             className="grid h-10 place-items-center rounded-md bg-ink px-4 text-sm font-semibold text-white transition hover:bg-ink/90"
@@ -80,33 +85,65 @@ export default async function ParentPnlPage({
         settlementAllocation={settlementAllocation}
         settlementCommissionDiagnostic={settlementCommissionDiagnostic}
       />
+      <ProductAttributionNotice diagnostics={attributionDiagnostics} />
       <DataQualityNotice dataQuality={dataQuality} diagnostic={diagnostic} />
       <section className="mb-6 grid gap-4 md:grid-cols-4">
-        <KpiCard label="Sales / GMV" value={formatCurrency(summary.netRevenue)} />
         <KpiCard
-          label="Refund Sales"
+          label="Gross Sales"
+          value={formatCurrency(summary.grossRevenue)}
+          detail="Valid PO sales before refunds"
+        />
+        <KpiCard
+          label="Refunds"
           value={formatCurrency(summary.salesRefunds)}
-          detail="Refunds come from imported order or settlement data when available."
+          detail="Source: Walmart Settlement"
         />
-        <KpiCard label="COGS" value={formatCurrency(summary.cogs)} />
-        <KpiCard label="Marketplace Commission" value={formatCurrency(summary.commissionFees)} />
-      </section>
-      <section className="mb-6 grid gap-4 md:grid-cols-4">
-        <KpiCard label="Fulfillment Fees" value={formatCurrency(summary.fulfillmentFees)} />
         <KpiCard
-          label="Other Settlement Fees"
-          value={formatCurrency(getOtherSettlementFees(summary))}
+          label="Sales"
+          value={formatCurrency(summary.netRevenue)}
+          detail="Gross Sales - Refunds"
         />
-        <KpiCard label="Refund Adjustments" value={formatCurrency(summary.refunds)} />
-        <KpiCard label="Walmart Connect Advertising" value={formatCurrency(summary.walmartConnectAdvertisingCost)} />
+        <KpiCard label="COGS" value={formatCurrency(summary.cogs)} detail="Source: Effective COGS" />
       </section>
       <section className="mb-6 grid gap-4 md:grid-cols-4">
-        <KpiCard label="SEM Advertising" value={formatCurrency(summary.semAdvertisingCost)} />
+        <KpiCard
+          label="Marketplace Commission"
+          value={formatCurrency(summary.commissionFees)}
+          detail="Source: Walmart Settlement"
+        />
+        <KpiCard
+          label="Fulfillment Fees"
+          value={formatCurrency(summary.fulfillmentFees)}
+          detail="Source: Walmart Settlement"
+        />
+        <KpiCard
+          label="Walmart Connect Advertising"
+          value={formatCurrency(summary.walmartConnectAdvertisingCost)}
+          detail={
+            isMarketplaceSummary
+              ? `Attributed ${formatCurrency(
+                  attributionDiagnostics.attributableWalmartConnectAdvertising
+                )} + unallocated ${formatCurrency(
+                  attributionDiagnostics.unallocatedWalmartConnectAdvertising
+                )}`
+              : "SKU-attributed only"
+          }
+        />
+        <KpiCard
+          label="SEM Advertising"
+          value={formatCurrency(attributionDiagnostics.sellerCenterSemAdvertising)}
+          detail="Marketplace-level"
+        />
+        <KpiCard
+          label="Other Fees"
+          value={formatCurrency(attributionDiagnostics.marketplaceOnlyOtherWalmartFees)}
+          detail="Marketplace-level"
+        />
         <KpiCard label="Profit" value={formatCurrency(summary.netProfit)} tone="good" />
-        <KpiCard label="Profit Margin" value={formatPercent(summary.netMarginPercent)} />
-        <KpiCard label="Units" value={formatNumber(summary.quantity)} />
       </section>
       <section className="mb-6 grid gap-4 md:grid-cols-4">
+        <KpiCard label="Profit Margin %" value={formatPercent(summary.netMarginPercent)} />
+        <KpiCard label="Units" value={formatNumber(summary.quantity)} />
         <KpiCard label="Profit / Unit" value={formatCurrency(summary.profitPerUnit)} />
         <KpiCard
           label="Missing COGS"
@@ -115,6 +152,7 @@ export default async function ParentPnlPage({
           tone={summary.missingCogsUnits > 0 ? "warn" : "good"}
         />
       </section>
+      <SettlementPayoutPanel payouts={settlementPayouts} />
 
       <ParentPnlControls
         formValues={parsed.formValues}
@@ -170,9 +208,14 @@ function ParentPnlTileGrid({
               {getParentPnlReconciliationLabel(tile.salesSource, tile.missingCogsUnits)}
             </div>
 
+            <div className="grid gap-2">
+              <TileMetric label="Gross Sales" value={formatCurrency(tile.grossRevenue)} />
+              <TileMetric label="Refunds" value={formatCurrency(tile.salesRefunds)} muted />
+            </div>
+
             <div>
               <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-                GMV <PercentDelta value={tile.netRevenueChangePercent} />
+                Sales <PercentDelta value={tile.netRevenueChangePercent} />
               </div>
               <div className="mt-1 text-2xl font-semibold text-ink">
                 {formatCurrency(tile.netRevenue)}
@@ -183,23 +226,22 @@ function ParentPnlTileGrid({
               <TileMetric label="Orders" value={formatNumber(tile.orderCount)} />
               <TileMetric label="Units" value={formatNumber(tile.units)} />
               <TileMetric label="Returns" value={formatNumber(tile.refundUnits)} muted />
-              <TileMetric label="Refund sales" value={formatCurrency(tile.salesRefunds)} muted />
+              <TileMetric label="COGS" value={formatCurrency(tile.cogs)} muted />
             </div>
 
             <div className="grid gap-2 rounded-md bg-slate-50 p-3">
-              {tile.refunds > 0 ? (
-                <CostLine label="Refund adjustments" value={formatCurrency(tile.refunds)} />
-              ) : null}
               <CostLine label="Commission" value={formatCurrency(tile.commissionFees)} />
               <CostLine label="Fulfillment" value={formatCurrency(tile.fulfillmentFees)} />
-              <CostLine label="Other settlement fees" value={formatCurrency(getOtherSettlementFees(tile))} />
-              <SettlementFeeBreakdown row={tile} />
               <CostLine label="COGS" value={formatCurrency(tile.cogs)} />
               <CostLine
                 label="Walmart Connect ads"
                 value={formatCurrency(tile.walmartConnectAdvertisingCost)}
               />
               <CostLine label="SEM ads" value={formatCurrency(tile.semAdvertisingCost)} />
+              <CostLine
+                label="Other fees"
+                value={formatCurrency(tile.otherWalmartFeesAndAdjustments)}
+              />
             </div>
 
             <div className="grid gap-1 border-t border-slate-200 pt-3">
@@ -222,6 +264,83 @@ function ParentPnlTileGrid({
         </article>
       ))}
     </section>
+  );
+}
+
+function ProductAttributionNotice({
+  diagnostics
+}: {
+  diagnostics: ProductAttributionDiagnostics;
+}) {
+  return (
+    <details className="mb-4 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-panel">
+      <summary className="cursor-pointer font-semibold text-ink">
+        Product attribution
+      </summary>
+      <p className="mt-2 max-w-4xl text-xs leading-5 text-slate-600">
+        Seller Center SEM and unallocated marketplace expenses are included in overall
+        Marketplace P&L, but are not fabricated onto individual SKUs or parent products.
+      </p>
+      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+        <AttributionMetric
+          label="Attributable refunds"
+          value={diagnostics.attributableRefunds}
+        />
+        <AttributionMetric
+          label="Unallocated refunds"
+          value={diagnostics.unallocatedRefunds}
+        />
+        <AttributionMetric
+          label="Attributable commission"
+          value={diagnostics.attributableCommission}
+        />
+        <AttributionMetric
+          label="Unallocated commission"
+          value={diagnostics.unallocatedCommission}
+        />
+        <AttributionMetric
+          label="Attributable fulfillment"
+          value={diagnostics.attributableFulfillmentFees}
+        />
+        <AttributionMetric
+          label="Unallocated fulfillment"
+          value={diagnostics.unallocatedFulfillmentFees}
+        />
+        <AttributionMetric
+          label="Attributable Walmart Connect"
+          value={diagnostics.attributableWalmartConnectAdvertising}
+        />
+        <AttributionMetric
+          label="Unallocated Walmart Connect"
+          value={diagnostics.unallocatedWalmartConnectAdvertising}
+        />
+        <AttributionMetric
+          label="Total Walmart Connect"
+          value={diagnostics.totalWalmartConnectAdvertising}
+        />
+        <AttributionMetric
+          label="Walmart Connect check"
+          value={diagnostics.walmartConnectAdvertisingReconciliationDifference}
+        />
+        <AttributionMetric
+          label="Seller Center SEM"
+          value={diagnostics.sellerCenterSemAdvertising}
+        />
+        <AttributionMetric
+          label="Other Walmart fees"
+          value={diagnostics.marketplaceOnlyOtherWalmartFees}
+        />
+      </div>
+    </details>
+  );
+}
+
+function AttributionMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md bg-slate-50 px-3 py-2">
+      <div className="font-medium text-slate-500">{label}</div>
+      <div className="mt-1 font-semibold text-ink">{formatCurrency(value)}</div>
+    </div>
   );
 }
 
@@ -248,7 +367,7 @@ function DataQualityNotice({
       {diagnostic ? (
         <div className="mt-3 grid gap-2 text-xs leading-5">
           <div>
-            Sales: {formatNumber(diagnostic.sales.orderRowsIncluded)} PO/order rows,
+            Sales: {formatNumber(diagnostic.sales.orderRowsIncluded)} PO/settlement sales rows,
             {" "}{formatCurrency(diagnostic.sales.gmvIncluded)} GMV.
           </div>
           <div>
@@ -297,12 +416,111 @@ function SalesSourceNotice({ salesSource }: { salesSource: PnlSalesSourceSummary
             className="rounded-md bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600"
             title={salesSource.note}
           >
-            Additional PO/order rows: {formatNumber(salesSource.suppressedDetailRowCount)}
+            Obsolete sales rows ignored: {formatNumber(salesSource.suppressedDetailRowCount)}
           </div>
         ) : null}
       </div>
     </section>
   );
+}
+
+function SettlementPayoutPanel({ payouts }: { payouts: SettlementPayoutHistoryRow[] }) {
+  const totalPayout = payouts.reduce((sum, payout) => sum + payout.payoutAmount, 0);
+  const latest = payouts[0];
+
+  return (
+    <section className="mb-6 rounded-md border border-slate-200 bg-white p-4 shadow-panel">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-ink">Settlement Payout</div>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+            Cash-flow metric from Walmart settlement reports. It is shown separately and is not included in Profit.
+          </p>
+        </div>
+        <div className="rounded-md bg-slate-50 px-4 py-3 text-right">
+          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+            {payouts.length > 1 ? "Selected payout total" : "Payout amount"}
+          </div>
+          <div className="mt-1 text-xl font-semibold text-ink">
+            {formatCurrency(totalPayout)}
+          </div>
+        </div>
+      </div>
+
+      {latest ? (
+        <div className="mt-4 grid gap-3 text-sm md:grid-cols-3">
+          <PayoutInfo label="Latest period" value={formatPayoutPeriod(latest)} />
+          <PayoutInfo
+            label="Payout date"
+            value={latest.payoutDate ? formatDate(latest.payoutDate) : "Not provided"}
+          />
+          <PayoutInfo label="Imported" value={formatDate(latest.importedAt)} />
+        </div>
+      ) : (
+        <div className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-500">
+          No settlement payout records are available for this view yet.
+        </div>
+      )}
+
+      {payouts.length ? (
+        <details className="mt-4">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-600">
+            Payout history
+          </summary>
+          <div className="mt-3 overflow-x-auto rounded-md border border-slate-200">
+            <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="border-b border-slate-200 px-4 py-3">Settlement period</th>
+                  <th className="border-b border-slate-200 px-4 py-3">Payout</th>
+                  <th className="border-b border-slate-200 px-4 py-3">Payout date</th>
+                  <th className="border-b border-slate-200 px-4 py-3">Source / imported</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payouts.map((payout) => (
+                  <tr key={payout.id} className="border-b border-slate-100">
+                    <td className="px-4 py-3 text-slate-700">{formatPayoutPeriod(payout)}</td>
+                    <td className="px-4 py-3 font-semibold text-ink">
+                      {formatCurrency(payout.payoutAmount)}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {payout.payoutDate ? formatDate(payout.payoutDate) : "Not provided"}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">
+                      <div>{payout.originalFileName ?? payout.source}</div>
+                      <div>{formatDate(payout.importedAt)}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function PayoutInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-slate-50 p-3">
+      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+        {label}
+      </div>
+      <div className="mt-1 font-semibold text-ink">{value}</div>
+    </div>
+  );
+}
+
+function formatPayoutPeriod(payout: SettlementPayoutHistoryRow) {
+  if (!payout.settlementPeriodStart && !payout.settlementPeriodEnd) {
+    return "Period not provided";
+  }
+
+  return `${payout.settlementPeriodStart ? formatDate(payout.settlementPeriodStart) : "Unknown"} - ${
+    payout.settlementPeriodEnd ? formatDate(payout.settlementPeriodEnd) : "Unknown"
+  }`;
 }
 
 function SettlementAllocationNotice({
@@ -373,53 +591,6 @@ function DiagnosticLine({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-4">
       <span className="text-slate-500">{label}</span>
       <span className="font-semibold text-ink">{value}</span>
-    </div>
-  );
-}
-
-function getOtherSettlementFees({
-  commissionFees,
-  fulfillmentFees,
-  marketplaceFees
-}: {
-  commissionFees: number;
-  fulfillmentFees: number;
-  marketplaceFees: number;
-}) {
-  return marketplaceFees - commissionFees - fulfillmentFees;
-}
-
-type SettlementFeeBreakdownRow = {
-  shippingFees?: number;
-  storageFees?: number;
-  returnFees?: number;
-  adjustmentFees?: number;
-  otherFees?: number;
-};
-
-function SettlementFeeBreakdown({ row }: { row: SettlementFeeBreakdownRow }) {
-  const lines = [
-    { label: "Shipping", value: row.shippingFees ?? 0 },
-    { label: "Storage", value: row.storageFees ?? 0 },
-    { label: "Return processing", value: row.returnFees ?? 0 },
-    { label: "Adjustments / credits", value: row.adjustmentFees ?? 0 },
-    { label: "Misc fees", value: row.otherFees ?? 0 }
-  ].filter((line) => Math.abs(line.value) >= 0.005);
-
-  if (!lines.length) {
-    return null;
-  }
-
-  return (
-    <div className="grid gap-1 border-l border-slate-200 pl-3">
-      {lines.map((line) => (
-        <CostLine
-          key={line.label}
-          label={line.label}
-          value={formatCurrency(line.value)}
-          muted
-        />
-      ))}
     </div>
   );
 }

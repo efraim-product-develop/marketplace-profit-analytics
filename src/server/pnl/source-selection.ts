@@ -9,14 +9,14 @@ export function selectDashboardProfitLines(
   lines: ProfitLineInput[],
   _dateRange?: PnlDateRange
 ): ProfitLineSelection {
-  const selectedLines = lines.filter(isDailyItemSalesSummaryLine);
+  const selectedLines = lines.filter(isSupportedSalesLine);
 
   return {
     lines: selectedLines,
-    suppressedDetailLines: lines.filter((line) => !isDailyItemSalesSummaryLine(line))
+    suppressedDetailLines: lines.filter((line) => !isSupportedSalesLine(line))
   };
 }
 
-function isDailyItemSalesSummaryLine(line: ProfitLineInput) {
-  return line.salesSource === "item_sales_daily_summary";
+function isSupportedSalesLine(line: ProfitLineInput) {
+  return line.salesSource === "po_report";
 }

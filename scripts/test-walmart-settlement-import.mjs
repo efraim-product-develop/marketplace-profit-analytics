@@ -2,305 +2,207 @@ import assert from "node:assert/strict";
 import { walmartSettlementImportParsers } from "../src/server/connectors/walmart/settlements.ts";
 
 const parser = walmartSettlementImportParsers[0];
-const csv = [
-  [
-    "Period Start Date",
-    "Period End Date",
-    "Total Payable",
-    "Currency",
-    "Transaction Key",
-    "Transaction Posted Timestamp",
-    "Transaction Type",
-    "Transaction Description",
-    "Customer Order #",
-    "Customer Order line #",
-    "Purchase Order #",
-    "Purchase Order line #",
-    "Amount",
-    "Amount Type",
-    "Ship Qty",
-    "Commission Rate",
-    "Base Commission Rate",
-    "Transaction Reason Description",
-    "Partner Item Id",
-    "Partner GTIN",
-    "Partner Item Name",
-    "Product Tax Code",
-    "Ship to State",
-    "Ship to City",
-    "Ship to Zipcode",
-    "Contract Category",
-    "Product Type",
-    "Commission Rule",
-    "Shipping Method",
-    "Fulfillment Type",
-    "Fulfillment Details"
-  ],
-  [
-    "01/01/2026",
-    "01/14/2026",
-    "91108.89",
-    "USD",
-    "",
-    "01/15/2026",
-    "PaymentSummary",
-    "Deposited in PAYONEER account",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    ""
-  ],
-  [
-    "",
-    "",
-    "",
-    "USD",
-    "",
-    "01/04/2026",
-    "Adjustment",
-    "WFS Fulfillment fee",
-    "",
-    "",
-    "129100357863767",
-    "4",
-    "-7.35",
-    "Fee/Reimbursement",
-    "",
-    "",
-    "",
-    "",
-    "SKU-1",
-    "",
-    "Sample item",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "Walmart-fulfilled(WFS)",
-    ""
-  ],
-  [
-    "01/01/2026",
-    "01/01/2026",
-    "",
-    "",
-    "",
-    "01/04/2026",
-    "Campaigns",
-    "SEM Marketing",
-    "",
-    "",
-    "",
-    "",
-    "-791.40",
-    "SEM Marketing Fee",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    ""
-  ],
-  [
-    "",
-    "",
-    "",
-    "USD",
-    "",
-    "01/04/2026",
-    "Sale",
-    "Commission",
-    "",
-    "",
-    "129100357863767",
-    "4",
-    "-2.15",
-    "Commission on Product",
-    "",
-    "",
-    "",
-    "",
-    "SKU-1",
-    "",
-    "Sample item",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "Walmart-fulfilled(WFS)",
-    ""
-  ],
-  [
-    "01/01/2026",
-    "01/14/2026",
-    "",
-    "USD",
-    "",
-    "01/15/2026",
-    "Refund",
-    "Refund sales",
-    "",
-    "",
-    "129100357863767",
-    "4",
-    "-22.47",
-    "Product Price",
-    "",
-    "",
-    "",
-    "",
-    "SKU-1",
-    "",
-    "Sample item",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "Walmart-fulfilled(WFS)",
-    ""
-  ],
-  [
-    "01/01/2026",
-    "01/14/2026",
-    "",
-    "USD",
-    "",
-    "01/15/2026",
-    "Refund",
-    "Refunded Shipping",
-    "",
-    "",
-    "129100357863767",
-    "4",
-    "-3.99",
-    "Shipping",
-    "",
-    "",
-    "",
-    "",
-    "SKU-1",
-    "",
-    "Sample item",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "Walmart-fulfilled(WFS)",
-    ""
-  ],
-  [
-    "01/01/2026",
-    "01/14/2026",
-    "",
-    "USD",
-    "",
-    "01/15/2026",
-    "Refund",
-    "Walmart return shipping charge",
-    "",
-    "",
-    "129100357863767",
-    "4",
-    "-1.25",
-    "Fee/Reimbursement",
-    "",
-    "",
-    "",
-    "",
-    "SKU-1",
-    "",
-    "Sample item",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "Walmart-fulfilled(WFS)",
-    ""
-  ],
-  [
-    "01/01/2026",
-    "01/14/2026",
-    "",
-    "USD",
-    "",
-    "01/15/2026",
-    "Adjustment",
-    "WFS Refund",
-    "",
-    "",
-    "129100357863767",
-    "4",
-    "88.66",
-    "WFS Inventory Fee/Reimbursement",
-    "",
-    "",
-    "",
-    "",
-    "SKU-1",
-    "",
-    "Sample item",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "Walmart-fulfilled(WFS)",
-    ""
-  ]
-]
+const headers = [
+  "Period Start Date",
+  "Period End Date",
+  "Total Payable",
+  "Currency",
+  "Transaction Key",
+  "Transaction Posted Timestamp",
+  "Transaction Type",
+  "Transaction Description",
+  "Customer Order #",
+  "Customer Order line #",
+  "Purchase Order #",
+  "Purchase Order line #",
+  "Amount",
+  "Amount Type",
+  "Ship Qty",
+  "Commission Rate",
+  "Base Commission Rate",
+  "Transaction Reason Description",
+  "Partner Item Id",
+  "Partner GTIN",
+  "Partner Item Name",
+  "Product Tax Code",
+  "Ship to State",
+  "Ship to City",
+  "Ship to Zipcode",
+  "Contract Category",
+  "Product Type",
+  "Commission Rule",
+  "Shipping Method",
+  "Fulfillment Type",
+  "Fulfillment Details",
+  "Payment Date"
+];
+
+const rows = [
+  settlementRow({
+    periodStartDate: "01/01/2026",
+    periodEndDate: "01/14/2026",
+    totalPayable: "91108.89",
+    paymentDate: "01/17/2026",
+    postedAt: "01/15/2026",
+    transactionType: "PaymentSummary",
+    description: "Deposited in PAYONEER account"
+  }),
+  settlementRow({
+    transactionKey: "sale-key-1",
+    postedAt: "01/04/2026",
+    transactionType: "Sale",
+    description: "Purchase",
+    amount: "25.00",
+    amountType: "Product Price"
+  }),
+  settlementRow({
+    postedAt: "01/04/2026",
+    transactionType: "Adjustment",
+    description: "WFS Fulfillment fee",
+    amount: "-7.35",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    periodStartDate: "01/01/2026",
+    periodEndDate: "01/01/2026",
+    postedAt: "01/04/2026",
+    transactionType: "Campaigns",
+    description: "SEM Marketing",
+    amount: "-791.40",
+    amountType: "SEM Marketing Fee",
+    purchaseOrder: "",
+    purchaseOrderLine: "",
+    sku: ""
+  }),
+  settlementRow({
+    postedAt: "01/04/2026",
+    transactionType: "Sale",
+    description: "Commission",
+    amount: "-2.15",
+    amountType: "Commission on Product"
+  }),
+  settlementRow({
+    periodStartDate: "01/01/2026",
+    periodEndDate: "01/14/2026",
+    postedAt: "01/15/2026",
+    transactionType: "Refund",
+    description: "Refund sales",
+    amount: "-22.47",
+    amountType: "Product Price"
+  }),
+  settlementRow({
+    periodStartDate: "01/01/2026",
+    periodEndDate: "01/14/2026",
+    postedAt: "01/15/2026",
+    transactionType: "Refund",
+    description: "Refunded Shipping",
+    amount: "-3.99",
+    amountType: "Shipping"
+  }),
+  settlementRow({
+    periodStartDate: "01/01/2026",
+    periodEndDate: "01/14/2026",
+    postedAt: "01/15/2026",
+    transactionType: "Refund",
+    description: "Walmart return shipping charge",
+    amount: "-1.25",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    periodStartDate: "01/01/2026",
+    periodEndDate: "01/14/2026",
+    postedAt: "01/15/2026",
+    transactionType: "Adjustment",
+    description: "WFS Refund",
+    amount: "88.66",
+    amountType: "WFS Inventory Fee/Reimbursement"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Service Fee",
+    description: "WFS Storage Fee",
+    amount: "-9.00",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Service Fee",
+    description: "WFS Inventory Transfer Fee",
+    amount: "-4.00",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Service Fee",
+    description: "WFS Inbound Transportation Fee",
+    amount: "-5.00",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Service Fee",
+    description: "WFS Long Term Storage Fee",
+    amount: "-6.00",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Service Fee",
+    description: "WFS Prep Service Fee",
+    amount: "-7.00",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Service Fee",
+    description: "WFS Inventory Disposal Order",
+    amount: "-8.00",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Adjustment",
+    description: "Review Accelerator",
+    amount: "-3.00",
+    amountType: "Review Accelerator"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Adjustment",
+    description: "WFS Found Inventory",
+    amount: "12.00",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Adjustment",
+    description: "WFS Damage in Warehouse",
+    amount: "-13.00",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Adjustment",
+    description: "WFS Lost Inventory",
+    amount: "-14.00",
+    amountType: "Fee/Reimbursement"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Sale",
+    description: "Seller promotion",
+    amount: "-2.00",
+    amountType: "Promo Code"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Sale",
+    description: "Product tax",
+    amount: "1.23",
+    amountType: "Product Tax"
+  })
+];
+const csv = [headers, ...rows]
   .map((row) => row.map(csvCell).join(","))
   .join("\n");
 
@@ -315,35 +217,196 @@ const context = {
 assert.equal(parser.detect(context), 100);
 
 const parsed = parser.parse(context);
+const categories = parsed.summary.otherWalmartFeesCategoryBreakdown;
 
 assert.equal(parsed.reportType, "walmart_payments_new");
-assert.equal(parsed.rowCount, 8);
-assert.equal(parsed.validCount, 7);
+assert.equal(parsed.allowDuplicateFileImport, true);
+assert.equal(parsed.rowCount, 21);
+assert.equal(parsed.validCount, 16);
 assert.equal(parsed.rejectedCount, 0);
-assert.equal(parsed.summary.feeRows, 4);
-assert.equal(parsed.summary.advertisingRows, 1);
-assert.equal(parsed.summary.refundRows, 2);
+assert.equal(parsed.summary.feeRows, 15);
+assert.equal(parsed.summary.advertisingRows, 0);
+assert.equal(parsed.summary.refundRows, 1);
 assert.equal(parsed.summary.commissionFeeTotal, 2.15);
 assert.equal(parsed.summary.fulfillmentFeeTotal, 7.35);
 assert.equal(parsed.summary.returnFeeTotal, 1.25);
-assert.equal(parsed.summary.refundSalesTotal, 26.46);
-assert.equal(parsed.summary.semAdvertisingTotal, 791.4);
+assert.equal(parsed.summary.refundSalesTotal, 22.47);
+assert.equal(parsed.summary.semRowsExcluded, 1);
+assert.equal(parsed.summary.semAdvertisingExcludedTotal, 791.4);
+assert.equal(parsed.summary.settlementSaleRowsSkipped, 1);
+assert.equal(parsed.summary.taxRowsSkipped, 1);
+assert.equal(parsed.summary.unsupportedFinancialRows, 1);
+assert.equal(parsed.summary.unsupportedFinancialTotal, -2);
+assert.equal(parsed.summary.otherWalmartFeesChargesTotal, 74.24);
+assert.equal(parsed.summary.otherWalmartFeesCreditsTotal, 100.66);
+assert.equal(parsed.summary.otherWalmartFeesNetTotal, -26.42);
+assert.equal(categoryTotal(categories, "wfs_storage_fee"), 9);
+assert.equal(categoryTotal(categories, "wfs_inventory_transfer_fee"), 4);
+assert.equal(categoryTotal(categories, "wfs_inbound_transportation_fee"), 5);
+assert.equal(categoryTotal(categories, "wfs_long_term_storage_fee"), 6);
+assert.equal(categoryTotal(categories, "wfs_prep_service_fee"), 7);
+assert.equal(categoryTotal(categories, "wfs_inventory_disposal_fee"), 8);
+assert.equal(categoryTotal(categories, "review_accelerator"), 3);
+assert.equal(categoryTotal(categories, "wfs_found_inventory"), -12);
+assert.equal(categoryTotal(categories, "wfs_damage_in_warehouse"), 13);
+assert.equal(categoryTotal(categories, "wfs_lost_inventory"), 14);
+assert.equal(categoryTotal(categories, "refunded_shipping"), 3.99);
+assert.equal(parsed.summary.paymentSummaryTotalPayable, 91108.89);
 assert.equal(parsed.summary.paymentSummaryPeriodStart, "2026-01-01T00:00:00.000Z");
 assert.equal(parsed.summary.paymentSummaryPeriodEnd, "2026-01-14T00:00:00.000Z");
-assert.equal(parsed.summary.inheritedPaymentSummaryPeriodRows, 2);
+assert.equal(parsed.summary.settlementPayoutAmount, 91108.89);
+assert.equal(parsed.summary.settlementPayoutPeriodStart, "2026-01-01T00:00:00.000Z");
+assert.equal(parsed.summary.settlementPayoutPeriodEnd, "2026-01-14T00:00:00.000Z");
+assert.equal(parsed.summary.settlementPayoutDate, "2026-01-17T00:00:00.000Z");
+assert.equal(parsed.summary.settlementPayoutDateSource, "Payment Date");
+assert.match(parsed.summary.settlementPayoutReference, /^walmart_payments_new::2026-01-01::2026-01-14::usd::91108.89$/);
+assert.equal(parsed.summary.inheritedPaymentSummaryPeriodRows, 12);
 assert.equal(parsed.summary.missingPeriodRows, 0);
 assert.equal(parsed.previewRows[0].normalizedData?.feeType, "fulfillment_fee");
 assert.equal(parsed.previewRows[0].normalizedData?.periodStartDate, "2026-01-01");
 assert.equal(parsed.previewRows[0].normalizedData?.periodEndDate, "2026-01-14");
 assert.equal(parsed.previewRows[0].normalizedData?.periodDateSource, "payment_summary");
-assert.equal(parsed.previewRows[2].normalizedData?.feeType, "commission");
-assert.equal(parsed.previewRows[2].normalizedData?.periodDateSource, "payment_summary");
-assert.equal(parsed.previewRows[3].normalizedData?.target, "refund");
-assert.equal(parsed.previewRows[4].normalizedData?.target, "refund");
-assert.equal(parsed.previewRows[5].normalizedData?.feeType, "return_fee");
-assert.equal(parsed.previewRows[6].normalizedData?.feeType, "adjustment");
+assert.equal(parsed.previewRows[1].normalizedData?.feeType, "commission");
+assert.equal(parsed.previewRows[1].normalizedData?.periodDateSource, "payment_summary");
+assert.equal(parsed.previewRows[2].normalizedData?.target, "refund");
+assert.equal(parsed.previewRows[3].normalizedData?.adjustmentCategory, "refunded_shipping");
+assert.equal(parsed.previewRows[3].normalizedData?.attributionScope, "marketplace");
+assert.equal(parsed.previewRows[4].normalizedData?.feeType, "return_fee");
+assert.equal(parsed.previewRows[5].normalizedData?.adjustmentCategory, "wfs_refund");
 
-console.log("ok - parses Walmart Payments New settlement commission, fees, SEM, and refund rows");
+const sameReport = parser.parse({ ...context, buffer: Buffer.from(csv) });
+assert.equal(sameReport.summary.settlementPayoutReference, parsed.summary.settlementPayoutReference);
+
+const correctedAmountCsv = [
+  headers,
+  settlementRow({
+    transactionKey: "corrected-commission-1",
+    postedAt: "01/04/2026",
+    transactionType: "Sale",
+    description: "Commission",
+    amount: "-2.15",
+    amountType: "Commission on Product"
+  })
+]
+  .map((row) => row.map(csvCell).join(","))
+  .join("\n");
+const revisedCorrectedAmountCsv = [
+  headers,
+  settlementRow({
+    transactionKey: "corrected-commission-1",
+    postedAt: "01/04/2026",
+    transactionType: "Sale",
+    description: "Commission",
+    amount: "-3.15",
+    amountType: "Commission on Product"
+  })
+]
+  .map((row) => row.map(csvCell).join(","))
+  .join("\n");
+const originalCorrection = parser.parse({ ...context, buffer: Buffer.from(correctedAmountCsv) });
+const revisedCorrection = parser.parse({ ...context, buffer: Buffer.from(revisedCorrectedAmountCsv) });
+const originalCorrectionRow = getPayloadRows(originalCorrection)[0];
+const revisedCorrectionRow = getPayloadRows(revisedCorrection)[0];
+
+assert.equal(originalCorrectionRow.duplicateKey, revisedCorrectionRow.duplicateKey);
+assert.equal(originalCorrectionRow.amount, -2.15);
+assert.equal(revisedCorrectionRow.amount, -3.15);
+
+const zeroPayoutCsv = [headers, settlementRow({
+  periodStartDate: "02/01/2026",
+  periodEndDate: "02/14/2026",
+  totalPayable: "0.00",
+  postedAt: "02/15/2026",
+  transactionType: "PaymentSummary",
+  description: "Deposited in PAYONEER account"
+})]
+  .map((row) => row.map(csvCell).join(","))
+  .join("\n");
+const zeroPayout = parser.parse({ ...context, buffer: Buffer.from(zeroPayoutCsv) });
+assert.equal(zeroPayout.summary.settlementPayoutAmount, 0);
+assert.equal(zeroPayout.summary.settlementPayoutDate, null);
+assert.notEqual(zeroPayout.summary.settlementPayoutReference, parsed.summary.settlementPayoutReference);
+
+const negativePayoutCsv = [headers, settlementRow({
+  periodStartDate: "03/01/2026",
+  periodEndDate: "03/14/2026",
+  totalPayable: "-10.50",
+  postedAt: "03/15/2026",
+  transactionType: "PaymentSummary",
+  description: "Deposited in PAYONEER account"
+})]
+  .map((row) => row.map(csvCell).join(","))
+  .join("\n");
+const negativePayout = parser.parse({ ...context, buffer: Buffer.from(negativePayoutCsv) });
+assert.equal(negativePayout.summary.settlementPayoutAmount, -10.5);
+
+console.log("ok - parses Walmart Payments New settlement financial categories safely");
+
+function settlementRow({
+  periodStartDate = "",
+  periodEndDate = "",
+  totalPayable = "",
+  currency = "USD",
+  transactionKey = "",
+  postedAt = "",
+  transactionType = "",
+  description = "",
+  customerOrder = "200015034663668",
+  customerOrderLine = "4",
+  purchaseOrder = "129100357863767",
+  purchaseOrderLine = "4",
+  amount = "",
+  amountType = "",
+  shipQuantity = "",
+  sku = "SKU-1",
+  itemName = "Sample item",
+  fulfillmentType = "Walmart-fulfilled(WFS)",
+  paymentDate = ""
+} = {}) {
+  return [
+    periodStartDate,
+    periodEndDate,
+    totalPayable,
+    currency,
+    transactionKey,
+    postedAt,
+    transactionType,
+    description,
+    customerOrder,
+    customerOrderLine,
+    purchaseOrder,
+    purchaseOrderLine,
+    amount,
+    amountType,
+    shipQuantity,
+    "",
+    "",
+    "",
+    sku,
+    "",
+    itemName,
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    fulfillmentType,
+    "",
+    paymentDate
+  ];
+}
+
+function categoryTotal(categories, category) {
+  const line = categories.find((row) => row.category === category);
+  return line?.netAmount ?? 0;
+}
+
+function getPayloadRows(report) {
+  return Array.isArray(report.payload?.rows) ? report.payload.rows : [];
+}
 
 function csvCell(value) {
   const text = String(value ?? "");

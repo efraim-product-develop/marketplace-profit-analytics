@@ -92,16 +92,14 @@ export function buildSkuPnlCsv(rows: ProfitRow[]) {
     "Department",
     "Source",
     "Units",
-    "Net Revenue",
-    "Refund Sales",
-    "Refund Adjustments",
+    "Gross Sales",
+    "Refunds",
+    "Sales",
     "Marketplace Commission",
     "Fulfillment Fees",
     "COGS",
     "Missing COGS Units",
     "Walmart Connect Advertising",
-    "SEM Advertising",
-    "Total Advertising",
     "Profit",
     "Profit Margin %",
     "Profit / Unit"
@@ -114,16 +112,14 @@ export function buildSkuPnlCsv(rows: ProfitRow[]) {
     row.department ?? "",
     getSkuPnlSourceLabel(row.salesSource),
     row.quantity,
-    row.netRevenue,
+    row.grossRevenue,
     row.salesRefunds,
-    row.refunds,
+    row.netRevenue,
     row.commissionFees,
     row.fulfillmentFees,
     row.cogs,
     row.missingCogsUnits,
     row.walmartConnectAdvertisingCost,
-    row.semAdvertisingCost,
-    row.advertisingCost,
     row.netProfit,
     row.netMarginPercent,
     row.profitPerUnit
@@ -133,20 +129,8 @@ export function buildSkuPnlCsv(rows: ProfitRow[]) {
 }
 
 export function getSkuPnlSourceLabel(source?: string) {
-  if (source === "item_sales_daily_summary") {
-    return "Item Sales";
-  }
-
-  if (source === "item_sales_monthly_summary") {
-    return "Legacy Item Sales";
-  }
-
-  if (source === "po_order_detail") {
-    return "PO Audit";
-  }
-
-  if (source === "mixed") {
-    return "Mixed";
+  if (source === "po_report") {
+    return "PO Reports";
   }
 
   return "No Sales";

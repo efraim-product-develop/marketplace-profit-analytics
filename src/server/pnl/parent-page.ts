@@ -91,16 +91,14 @@ export function buildParentPnlCsv(
     "Source",
     "Units",
     "Orders",
-    "Net Revenue",
-    "Refund Sales",
-    "Refund Adjustments",
+    "Gross Sales",
+    "Refunds",
+    "Sales",
     "Marketplace Commission",
     "Fulfillment Fees",
     "COGS",
     "Missing COGS Units",
     "Walmart Connect Advertising",
-    "SEM Advertising",
-    "Total Advertising",
     "Profit",
     "Profit Margin %",
     "Profit / Unit"
@@ -115,16 +113,14 @@ export function buildParentPnlCsv(
     getParentPnlSourceLabel(row.salesSource.kind),
     row.units,
     row.orderCount,
-    row.netRevenue,
+    row.grossRevenue,
     row.salesRefunds,
-    row.refunds,
+    row.netRevenue,
     row.commissionFees,
     row.fulfillmentFees,
     row.cogs,
     row.missingCogsUnits,
     row.walmartConnectAdvertisingCost,
-    row.semAdvertisingCost,
-    row.advertisingCost,
     row.netProfit,
     row.netMarginPercent,
     row.profitPerUnit
@@ -138,20 +134,8 @@ export function buildParentPnlCsv(
 }
 
 export function getParentPnlSourceLabel(source?: string) {
-  if (source === "item_sales_daily_summary") {
-    return "Item Sales";
-  }
-
-  if (source === "item_sales_monthly_summary") {
-    return "Legacy Item Sales";
-  }
-
-  if (source === "po_order_detail") {
-    return "PO Audit";
-  }
-
-  if (source === "mixed") {
-    return "Mixed";
+  if (source === "po_report") {
+    return "PO Reports";
   }
 
   return "No Sales";
@@ -169,7 +153,7 @@ export function getParentPnlReconciliationLabel(
     return "No sales rows in this period yet.";
   }
 
-  return "Using daily Walmart Item Sales as the sales source.";
+  return "Using Walmart PO reports for sales. Product P&L includes only attributable settlement refunds, commission, fulfillment fees, COGS, and SKU-attributed Walmart Connect ads.";
 }
 
 function profitRowCsvValues(section: string, row: ProfitRow, period: string) {
@@ -183,16 +167,14 @@ function profitRowCsvValues(section: string, row: ProfitRow, period: string) {
     getParentPnlSourceLabel(row.salesSource),
     row.quantity,
     "",
-    row.netRevenue,
+    row.grossRevenue,
     row.salesRefunds,
-    row.refunds,
+    row.netRevenue,
     row.commissionFees,
     row.fulfillmentFees,
     row.cogs,
     row.missingCogsUnits,
     row.walmartConnectAdvertisingCost,
-    row.semAdvertisingCost,
-    row.advertisingCost,
     row.netProfit,
     row.netMarginPercent,
     row.profitPerUnit

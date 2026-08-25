@@ -20,6 +20,7 @@ import {
   type RollingPnlComparisonPeriod
 } from "@/server/pnl/periods";
 import type {
+  ProductAttributionDiagnostics,
   PnlSalesSourceSummary,
   SkuPnlFilterOptions,
   SkuPnlOrderDrilldownRow
@@ -42,6 +43,7 @@ export default async function SkuPnlPage({
       summary,
       salesSource,
       settlementAllocation,
+      attributionDiagnostics,
       dataQuality,
       diagnostic,
       settlementCommissionDiagnostic,
@@ -78,33 +80,49 @@ export default async function SkuPnlPage({
         settlementAllocation={settlementAllocation}
         settlementCommissionDiagnostic={settlementCommissionDiagnostic}
       />
+      <ProductAttributionNotice diagnostics={attributionDiagnostics} />
       <DataQualityNotice dataQuality={dataQuality} diagnostic={diagnostic} />
       <section className="mb-6 grid gap-4 md:grid-cols-4">
-        <KpiCard label="Sales / GMV" value={formatCurrency(summary.netRevenue)} />
         <KpiCard
-          label="Refund Sales"
+          label="Gross Sales"
+          value={formatCurrency(summary.grossRevenue)}
+          detail="Valid PO sales before refunds"
+        />
+        <KpiCard
+          label="Refunds"
           value={formatCurrency(summary.salesRefunds)}
-          detail="Refunds come from imported order or settlement data when available."
+          detail="Source: Walmart Settlement"
+        />
+        <KpiCard
+          label="Sales"
+          value={formatCurrency(summary.netRevenue)}
+          detail="Gross Sales - Refunds"
         />
         <KpiCard label="COGS" value={formatCurrency(summary.cogs)} />
-        <KpiCard label="Marketplace Commission" value={formatCurrency(summary.commissionFees)} />
       </section>
       <section className="mb-6 grid gap-4 md:grid-cols-4">
+        <KpiCard label="Marketplace Commission" value={formatCurrency(summary.commissionFees)} />
         <KpiCard label="Fulfillment Fees" value={formatCurrency(summary.fulfillmentFees)} />
         <KpiCard
-          label="Other Settlement Fees"
-          value={formatCurrency(getOtherSettlementFees(summary))}
+          label="Walmart Connect Advertising"
+          value={formatCurrency(summary.walmartConnectAdvertisingCost)}
+          detail="SKU-attributed only"
         />
-        <KpiCard label="Refund Adjustments" value={formatCurrency(summary.refunds)} />
-        <KpiCard label="Walmart Connect Advertising" value={formatCurrency(summary.walmartConnectAdvertisingCost)} />
-      </section>
-      <section className="mb-6 grid gap-4 md:grid-cols-4">
-        <KpiCard label="SEM Advertising" value={formatCurrency(summary.semAdvertisingCost)} />
+        <KpiCard
+          label="SEM Advertising"
+          value={formatCurrency(attributionDiagnostics.sellerCenterSemAdvertising)}
+          detail="Marketplace-level"
+        />
+        <KpiCard
+          label="Other Fees"
+          value={formatCurrency(attributionDiagnostics.marketplaceOnlyOtherWalmartFees)}
+          detail="Marketplace-level"
+        />
         <KpiCard label="Profit" value={formatCurrency(summary.netProfit)} tone="good" />
-        <KpiCard label="Profit Margin" value={formatPercent(summary.netMarginPercent)} />
-        <KpiCard label="Units" value={formatNumber(summary.quantity)} />
       </section>
       <section className="mb-6 grid gap-4 md:grid-cols-4">
+        <KpiCard label="Profit Margin %" value={formatPercent(summary.netMarginPercent)} />
+        <KpiCard label="Units" value={formatNumber(summary.quantity)} />
         <KpiCard label="Profit / Unit" value={formatCurrency(summary.profitPerUnit)} />
         <KpiCard
           label="Missing COGS"
@@ -283,6 +301,75 @@ function FilterSelect({
   );
 }
 
+function ProductAttributionNotice({
+  diagnostics
+}: {
+  diagnostics: ProductAttributionDiagnostics;
+}) {
+  return (
+    <details className="mb-4 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-panel">
+      <summary className="cursor-pointer font-semibold text-ink">
+        Product attribution
+      </summary>
+      <p className="mt-2 max-w-4xl text-xs leading-5 text-slate-600">
+        Seller Center SEM and unallocated marketplace expenses are included in Marketplace
+        P&L only because they cannot be reliably attributed to individual SKUs.
+      </p>
+      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+        <AttributionMetric
+          label="Attributable refunds"
+          value={diagnostics.attributableRefunds}
+        />
+        <AttributionMetric
+          label="Unallocated refunds"
+          value={diagnostics.unallocatedRefunds}
+        />
+        <AttributionMetric
+          label="Attributable commission"
+          value={diagnostics.attributableCommission}
+        />
+        <AttributionMetric
+          label="Unallocated commission"
+          value={diagnostics.unallocatedCommission}
+        />
+        <AttributionMetric
+          label="Attributable fulfillment"
+          value={diagnostics.attributableFulfillmentFees}
+        />
+        <AttributionMetric
+          label="Unallocated fulfillment"
+          value={diagnostics.unallocatedFulfillmentFees}
+        />
+        <AttributionMetric
+          label="Attributable Walmart Connect"
+          value={diagnostics.attributableWalmartConnectAdvertising}
+        />
+        <AttributionMetric
+          label="Unallocated Walmart Connect"
+          value={diagnostics.unallocatedWalmartConnectAdvertising}
+        />
+        <AttributionMetric
+          label="Seller Center SEM excluded"
+          value={diagnostics.sellerCenterSemAdvertising}
+        />
+        <AttributionMetric
+          label="Other Walmart fees excluded"
+          value={diagnostics.marketplaceOnlyOtherWalmartFees}
+        />
+      </div>
+    </details>
+  );
+}
+
+function AttributionMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md bg-slate-50 px-3 py-2">
+      <div className="font-medium text-slate-500">{label}</div>
+      <div className="mt-1 font-semibold text-ink">{formatCurrency(value)}</div>
+    </div>
+  );
+}
+
 function SalesSourceNotice({ salesSource }: { salesSource: PnlSalesSourceSummary }) {
   return (
     <section className="mb-6 rounded-md border border-slate-200 bg-white p-4 shadow-panel">
@@ -298,7 +385,7 @@ function SalesSourceNotice({ salesSource }: { salesSource: PnlSalesSourceSummary
             className="rounded-md bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600"
             title={salesSource.note}
           >
-            Additional PO/order rows: {formatNumber(salesSource.suppressedDetailRowCount)}
+            Obsolete sales rows ignored: {formatNumber(salesSource.suppressedDetailRowCount)}
           </div>
         ) : null}
       </div>
@@ -399,7 +486,7 @@ function DataQualityNotice({
       {diagnostic ? (
         <div className="mt-3 grid gap-2 text-xs leading-5">
           <div>
-            Sales: {formatNumber(diagnostic.sales.orderRowsIncluded)} PO/order rows,
+            Sales: {formatNumber(diagnostic.sales.orderRowsIncluded)} PO/settlement sales rows,
             {" "}{formatCurrency(diagnostic.sales.gmvIncluded)} GMV.
           </div>
           <div>
@@ -465,12 +552,10 @@ function SkuOrderDrilldown({
               <th className="border-b border-slate-200 px-4 py-3 font-semibold">Source</th>
               <th className="border-b border-slate-200 px-4 py-3 font-semibold">Status</th>
               <th className="border-b border-slate-200 px-4 py-3 font-semibold">Units</th>
-              <th className="border-b border-slate-200 px-4 py-3 font-semibold">Net Revenue</th>
-              <th className="border-b border-slate-200 px-4 py-3 font-semibold">Refund Sales</th>
-              <th className="border-b border-slate-200 px-4 py-3 font-semibold">Refund Adjustments</th>
+              <th className="border-b border-slate-200 px-4 py-3 font-semibold">Sales</th>
+              <th className="border-b border-slate-200 px-4 py-3 font-semibold">Refunds</th>
               <th className="border-b border-slate-200 px-4 py-3 font-semibold">Commission</th>
               <th className="border-b border-slate-200 px-4 py-3 font-semibold">Fulfillment</th>
-              <th className="border-b border-slate-200 px-4 py-3 font-semibold">Other Fees</th>
               <th className="border-b border-slate-200 px-4 py-3 font-semibold">COGS</th>
               <th className="border-b border-slate-200 px-4 py-3 font-semibold">Profit</th>
             </tr>
@@ -493,10 +578,8 @@ function SkuOrderDrilldown({
                   <td className="px-4 py-3 text-slate-700">{formatNumber(row.quantity)}</td>
                   <td className="px-4 py-3 text-slate-700">{formatCurrency(row.netRevenue)}</td>
                   <td className="px-4 py-3 text-slate-700">{formatCurrency(row.salesRefunds)}</td>
-                  <td className="px-4 py-3 text-slate-700">{formatCurrency(row.refunds)}</td>
                   <td className="px-4 py-3 text-slate-700">{formatCurrency(row.commissionFees)}</td>
                   <td className="px-4 py-3 text-slate-700">{formatCurrency(row.fulfillmentFees)}</td>
-                  <td className="px-4 py-3 text-slate-700">{formatCurrency(getOtherSettlementFees(row))}</td>
                   <td className="px-4 py-3 text-slate-700">{formatCurrency(row.cogs)}</td>
                   <td className="px-4 py-3 font-semibold text-slate-800">
                     {formatCurrency(row.netProfit)}
@@ -505,7 +588,7 @@ function SkuOrderDrilldown({
               ))
             ) : (
               <tr>
-                <td className="px-4 py-10 text-center text-slate-500" colSpan={13}>
+                <td className="px-4 py-10 text-center text-slate-500" colSpan={11}>
                   No order rows match this SKU and filter set.
                 </td>
               </tr>
@@ -515,18 +598,6 @@ function SkuOrderDrilldown({
       </div>
     </section>
   );
-}
-
-function getOtherSettlementFees({
-  commissionFees,
-  fulfillmentFees,
-  marketplaceFees
-}: {
-  commissionFees: number;
-  fulfillmentFees: number;
-  marketplaceFees: number;
-}) {
-  return marketplaceFees - commissionFees - fulfillmentFees;
 }
 
 function SourcePill({ label, muted = false }: { label: string; muted?: boolean }) {

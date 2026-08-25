@@ -48,21 +48,6 @@ export async function ImportUploadPage({
               </div>
             ) : null}
 
-            {importKind === "sales" ? (
-              <label className="grid gap-2 text-sm font-medium text-slate-700">
-                Report Date
-                <input
-                  name="reportDate"
-                  type="date"
-                  defaultValue={getDefaultReportDate()}
-                  className="h-11 rounded-md border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-ocean focus:ring-2 focus:ring-ocean/20"
-                />
-                <span className="text-xs font-normal text-slate-500">
-                  Choose the exact Seller Center Item Sales report day. Upload one report per day.
-                </span>
-              </label>
-            ) : null}
-
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               Report File
               <input
@@ -136,10 +121,14 @@ function buildImportPageTitle(marketplaceTitle: string, importKind: ImportKind) 
   }
 
   if (importKind === "advertising") {
-    return `Upload ${marketplaceTitle} Advertising Report`;
+    return `Upload ${marketplaceTitle} Seller Center SEM Report`;
   }
 
-  return `Upload ${marketplaceTitle} Inventory Report`;
+  if (importKind === "inventory") {
+    return `Upload ${marketplaceTitle} SKU / Parent Mapping`;
+  }
+
+  return `Upload ${marketplaceTitle} Report`;
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -157,14 +146,4 @@ function StatusBadge({ status }: { status: string }) {
       {status.replace("_", " ")}
     </span>
   );
-}
-
-function getDefaultReportDate() {
-  const date = new Date();
-  date.setUTCDate(date.getUTCDate() - 1);
-  return [
-    date.getUTCFullYear(),
-    String(date.getUTCMonth() + 1).padStart(2, "0"),
-    String(date.getUTCDate()).padStart(2, "0")
-  ].join("-");
 }

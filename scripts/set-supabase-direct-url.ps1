@@ -31,20 +31,21 @@ if (!$pooledUsername -or !$encodedPassword) {
 }
 
 $projectRef = ""
-$directUsername = $pooledUsername
+$sessionPoolerUsername = $pooledUsername
 
 if ($pooledUsername -match "^postgres\.(?<ref>.+)$") {
   $projectRef = $Matches["ref"]
-  $directUsername = "postgres"
+  $sessionPoolerUsername = $pooledUsername
 } elseif ($uri.Host -match "^(?<ref>[a-z0-9]+)\.supabase\.co$") {
   $projectRef = $Matches["ref"]
+  $sessionPoolerUsername = "postgres.$projectRef"
 }
 
 if (!$projectRef) {
   throw "Could not determine the Supabase project reference. Add DIRECT_URL manually from Supabase Database settings."
 }
 
-$directUrl = "$($uri.Scheme)://$directUsername`:$encodedPassword@db.$projectRef.supabase.co:5432$($uri.AbsolutePath)?sslmode=require"
+$directUrl = "$($uri.Scheme)://$sessionPoolerUsername`:$encodedPassword@$($uri.Host):5432$($uri.AbsolutePath)?sslmode=require"
 
 if ([regex]::IsMatch($content, '(?m)^DIRECT_URL=')) {
   $newContent = [regex]::Replace(
@@ -57,4 +58,4 @@ if ([regex]::IsMatch($content, '(?m)^DIRECT_URL=')) {
 }
 
 Set-Content -Path $EnvPath -Value $newContent -NoNewline
-Write-Host "Updated DIRECT_URL in $EnvPath without printing it."
+Write-Host "Updated DIRECT_URL in $EnvPath to the Supabase Session pooler without printing it."

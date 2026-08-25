@@ -3,20 +3,22 @@ import { calculateDailyPnl } from "../src/server/pnl/daily-service.ts";
 
 const tests = [
   {
-    name: "uses daily Item Sales for a one-day range and excludes PO/order rows",
+    name: "uses PO report rows for a one-day range and excludes obsolete rows",
     run() {
       const result = calculateDailyPnl({
         ...baseInput("sellerSku", range("2026-01-05", "2026-01-05")),
         lines: [
-          itemSalesLine("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 100, 2),
+          poReportLine("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 100, 2),
           orderLine("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 999, 99)
         ]
       });
 
       assert.equal(result.summary.netRevenue, 100);
       assert.equal(result.summary.quantity, 2);
-      assert.equal(result.sourceMetadata.monthlySummaryRowsIgnored, 1);
-      assert.equal(result.salesSource.kind, "item_sales_daily_summary");
+      assert.equal(result.sourceMetadata.obsoleteSalesRowsIgnored, 1);
+      assert.equal(result.sourceMetadata.coverageComplete, true);
+      assert.deepEqual(result.sourceMetadata.missingDates, []);
+      assert.equal(result.salesSource.kind, "po_report");
     }
   },
   {
@@ -25,9 +27,9 @@ const tests = [
       const result = calculateDailyPnl({
         ...baseInput("sellerSku", range("2026-01-01", "2026-01-07")),
         lines: [
-          itemSalesLine("SKU-1", "PARENT-1", "2026-01-01T00:00:00.000Z", 100, 1),
-          itemSalesLine("SKU-1", "PARENT-1", "2026-01-07T23:59:59.999Z", 200, 2),
-          itemSalesLine("SKU-1", "PARENT-1", "2026-01-08T00:00:00.000Z", 300, 3)
+          poReportLine("SKU-1", "PARENT-1", "2026-01-01T00:00:00.000Z", 100, 1),
+          poReportLine("SKU-1", "PARENT-1", "2026-01-07T23:59:59.999Z", 200, 2),
+          poReportLine("SKU-1", "PARENT-1", "2026-01-08T00:00:00.000Z", 300, 3)
         ]
       });
 
@@ -41,9 +43,9 @@ const tests = [
       const result = calculateDailyPnl({
         ...baseInput("parentSku", range("2026-01-10", "2026-01-20")),
         lines: [
-          itemSalesLine("SKU-1", "PARENT-1", "2026-01-09T12:00:00.000Z", 50, 1),
-          itemSalesLine("SKU-1", "PARENT-1", "2026-01-10T12:00:00.000Z", 100, 1),
-          itemSalesLine("SKU-2", "PARENT-1", "2026-01-20T12:00:00.000Z", 150, 1)
+          poReportLine("SKU-1", "PARENT-1", "2026-01-09T12:00:00.000Z", 50, 1),
+          poReportLine("SKU-1", "PARENT-1", "2026-01-10T12:00:00.000Z", 100, 1),
+          poReportLine("SKU-2", "PARENT-1", "2026-01-20T12:00:00.000Z", 150, 1)
         ]
       });
 
@@ -56,7 +58,7 @@ const tests = [
     run() {
       const result = calculateDailyPnl({
         ...baseInput("sellerSku", range("2026-01-02", "2026-01-02")),
-        lines: [itemSalesLine("SKU-1", "PARENT-1", "2026-01-02T00:00:00.000Z", 75, 1)]
+        lines: [poReportLine("SKU-1", "PARENT-1", "2026-01-02T00:00:00.000Z", 75, 1)]
       });
 
       assert.equal(result.summary.netRevenue, 75);
@@ -68,8 +70,8 @@ const tests = [
       const result = calculateDailyPnl({
         ...baseInput("sellerSku", range("2026-01-01", "2026-01-01")),
         lines: [
-          itemSalesLine("SKU-1", "PARENT-1", "2026-01-01T23:59:59.999Z", 25, 1),
-          itemSalesLine("SKU-1", "PARENT-1", "2026-01-02T00:00:00.000Z", 50, 1)
+          poReportLine("SKU-1", "PARENT-1", "2026-01-01T23:59:59.999Z", 25, 1),
+          poReportLine("SKU-1", "PARENT-1", "2026-01-02T00:00:00.000Z", 50, 1)
         ]
       });
 
@@ -81,7 +83,7 @@ const tests = [
     run() {
       const result = calculateDailyPnl({
         ...baseInput("sellerSku", range("2026-01-05", "2026-01-07")),
-        lines: [itemSalesLine("SKU-1", "PARENT-1", "2026-01-05T12:00:00.000Z", 300, 3)],
+        lines: [poReportLine("SKU-1", "PARENT-1", "2026-01-05T12:00:00.000Z", 300, 3)],
         feeAdjustments: [
           settlementFee("commission", -1400, "2026-01-01", "2026-01-14"),
           settlementFee("fulfillment_fee", -280, "2026-01-01", "2026-01-14")
@@ -126,6 +128,122 @@ const tests = [
     }
   },
   {
+    name: "includes Seller Center SEM in marketplace summary but not parent rows",
+    run() {
+      const result = calculateDailyPnl({
+        ...baseInput("parentSku", range("2026-01-05", "2026-01-05")),
+        sellerCenterSemMode: "summaryOnly",
+        lines: [
+          poReportLine("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 100, 1)
+        ],
+        advertisingCosts: [
+          sellerCenterSem("2026-01-05T00:00:00.000Z", 30),
+          connectAd("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 10, { grain: "daily" })
+        ]
+      });
+
+      assert.equal(result.summary.semAdvertisingCost, 30);
+      assert.equal(result.summary.walmartConnectAdvertisingCost, 10);
+      assert.equal(result.summary.advertisingCost, 40);
+      assert.equal(result.summary.netProfit, 60);
+      assert.equal(result.rows.length, 1);
+      assert.equal(result.rows[0].parentSku, "PARENT-1");
+      assert.equal(result.rows[0].semAdvertisingCost, 0);
+      assert.equal(result.rows[0].walmartConnectAdvertisingCost, 10);
+      assert.equal(result.rows[0].netProfit, 90);
+    }
+  },
+  {
+    name: "excludes Seller Center SEM from SKU P&L allocation",
+    run() {
+      const result = calculateDailyPnl({
+        ...baseInput("sellerSku", range("2026-01-05", "2026-01-05")),
+        sellerCenterSemMode: "exclude",
+        lines: [
+          poReportLine("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 100, 1)
+        ],
+        advertisingCosts: [
+          sellerCenterSem("2026-01-05T00:00:00.000Z", 30),
+          connectAd("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 10, { grain: "daily" })
+        ]
+      });
+
+      assert.equal(result.summary.semAdvertisingCost, 0);
+      assert.equal(result.summary.walmartConnectAdvertisingCost, 10);
+      assert.equal(result.summary.advertisingCost, 10);
+      assert.equal(result.rows[0].semAdvertisingCost, 0);
+      assert.equal(result.rows[0].netProfit, 90);
+    }
+  },
+  {
+    name: "applies settlement refunds to PO report sales",
+    run() {
+      const result = calculateDailyPnl({
+        ...baseInput("sellerSku", range("2026-01-05", "2026-01-05")),
+        lines: [
+          poReportLine("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 100, 1)
+        ],
+        refundAdjustments: [
+          settlementRefund("SKU-1", "PARENT-1", 12, "2026-01-05", "2026-01-05")
+        ]
+      });
+
+      assert.equal(result.summary.netRevenue, 88);
+      assert.equal(result.summary.salesRefunds, 12);
+      assert.equal(result.summary.netProfit, 88);
+      assert.equal(result.refundAdjustments.length, 1);
+    }
+  },
+  {
+    name: "uses settlement refunds when PO report rows have no row-level refund value",
+    run() {
+      const result = calculateDailyPnl({
+        ...baseInput("sellerSku", range("2026-01-05", "2026-01-05")),
+        lines: [
+          poReportLine("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 100, 1)
+        ],
+        refundAdjustments: [
+          settlementRefund("SKU-1", "PARENT-1", 12, "2026-01-05", "2026-01-05")
+        ]
+      });
+
+      assert.equal(result.summary.netRevenue, 88);
+      assert.equal(result.summary.salesRefunds, 12);
+      assert.equal(result.summary.netProfit, 88);
+      assert.equal(result.refundAdjustments.length, 1);
+    }
+  },
+  {
+    name: "refund posted in a later period reduces sales in that later period",
+    run() {
+      const january = calculateDailyPnl({
+        ...baseInput("sellerSku", range("2026-01-05", "2026-01-05")),
+        lines: [
+          poReportLine("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 100, 1)
+        ],
+        refundAdjustments: [
+          settlementRefund("SKU-1", "PARENT-1", 12, "2026-02-05", "2026-02-05")
+        ]
+      });
+      const february = calculateDailyPnl({
+        ...baseInput("sellerSku", range("2026-02-05", "2026-02-05")),
+        lines: [
+          poReportLine("SKU-1", "PARENT-1", "2026-01-05T00:00:00.000Z", 100, 1)
+        ],
+        refundAdjustments: [
+          settlementRefund("SKU-1", "PARENT-1", 12, "2026-02-05", "2026-02-05")
+        ]
+      });
+
+      assert.equal(january.summary.grossRevenue, 100);
+      assert.equal(january.summary.salesRefunds, 0);
+      assert.equal(january.summary.netRevenue, 100);
+      assert.equal(february.summary.grossRevenue, 0);
+      assert.equal(february.summary.salesRefunds, 12);
+      assert.equal(february.summary.netRevenue, -12);
+    }
+  },
+  {
     name: "uses posting-date fallback when settlement period dates are missing",
     run() {
       const result = calculateDailyPnl({
@@ -153,8 +271,8 @@ const tests = [
       const input = {
         ...baseInput("sellerSku", range("2026-01-01", "2026-01-07")),
         lines: [
-          itemSalesLine("SKU-1", "PARENT-1", "2026-01-02T12:00:00.000Z", 100, 1, 20),
-          itemSalesLine("SKU-2", "PARENT-1", "2026-01-03T12:00:00.000Z", 200, 2, 40)
+          poReportLine("SKU-1", "PARENT-1", "2026-01-02T12:00:00.000Z", 100, 1, 20),
+          poReportLine("SKU-2", "PARENT-1", "2026-01-03T12:00:00.000Z", 200, 2, 40)
         ],
         feeAdjustments: [settlementFee("commission", -70, "2026-01-01", "2026-01-07")]
       };
@@ -195,7 +313,7 @@ function range(from, to) {
 function orderLine(sellerSku, parentSku, orderDate, itemRevenue, quantity, cogsTotal = 0) {
   return {
     marketplace: "walmart",
-    salesSource: "po_order_detail",
+    salesSource: "none",
     sellerSku,
     parentSku,
     orderId: `${sellerSku}-${orderDate}`,
@@ -207,10 +325,11 @@ function orderLine(sellerSku, parentSku, orderDate, itemRevenue, quantity, cogsT
   };
 }
 
-function itemSalesLine(sellerSku, parentSku, orderDate, itemRevenue, quantity, cogsTotal = 0) {
+function poReportLine(sellerSku, parentSku, orderDate, itemRevenue, quantity, cogsTotal = 0, salesRefunds = 0) {
   return {
     ...orderLine(sellerSku, parentSku, orderDate, itemRevenue, quantity, cogsTotal),
-    salesSource: "item_sales_daily_summary"
+    salesSource: "po_report",
+    salesRefunds
   };
 }
 
@@ -248,6 +367,22 @@ function settlementSem(amount, start, end) {
   };
 }
 
+function settlementRefund(sellerSku, parentSku, amount, start, end) {
+  return {
+    marketplace: "walmart",
+    sellerSku,
+    parentSku,
+    amount,
+    refundDate: new Date(`${end}T12:00:00.000Z`),
+    metadata: {
+      source: "walmart_payments_new",
+      periodStartDate: start,
+      periodEndDate: end,
+      originalAmount: -amount
+    }
+  };
+}
+
 function connectAd(sellerSku, parentSku, costDate, amount, metadata) {
   return {
     marketplace: "walmart",
@@ -257,5 +392,20 @@ function connectAd(sellerSku, parentSku, costDate, amount, metadata) {
     amount,
     costDate: new Date(costDate),
     metadata
+  };
+}
+
+function sellerCenterSem(costDate, amount) {
+  return {
+    marketplace: "walmart",
+    sellerSku: null,
+    parentSku: null,
+    source: "walmart_seller_center_sem",
+    amount,
+    costDate: new Date(costDate),
+    metadata: {
+      source: "walmart_seller_center_sem",
+      grain: "daily"
+    }
   };
 }

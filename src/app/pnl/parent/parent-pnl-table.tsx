@@ -38,17 +38,17 @@ const parentColumns: ColumnDef<ProfitRow>[] = [
   },
   {
     accessorKey: "grossRevenue",
-    header: "Gross Revenue",
+    header: "Gross Sales",
     cell: ({ row }) => formatCurrency(row.original.grossRevenue)
   },
   {
     accessorKey: "netRevenue",
-    header: "Net Revenue",
+    header: "Sales",
     cell: ({ row }) => formatCurrency(row.original.netRevenue)
   },
   {
     accessorKey: "salesRefunds",
-    header: "Refund Sales",
+    header: "Refunds",
     cell: ({ row }) => formatCurrency(row.original.salesRefunds)
   },
   {
@@ -60,11 +60,6 @@ const parentColumns: ColumnDef<ProfitRow>[] = [
     accessorKey: "fulfillmentFees",
     header: "Fulfillment",
     cell: ({ row }) => formatCurrency(row.original.fulfillmentFees)
-  },
-  {
-    id: "otherSettlementFees",
-    header: "Other Fees",
-    cell: ({ row }) => formatCurrency(getOtherSettlementFees(row.original))
   },
   {
     accessorKey: "cogs",
@@ -80,11 +75,6 @@ const parentColumns: ColumnDef<ProfitRow>[] = [
     accessorKey: "walmartConnectAdvertisingCost",
     header: "Walmart Connect Ads",
     cell: ({ row }) => formatCurrency(row.original.walmartConnectAdvertisingCost)
-  },
-  {
-    accessorKey: "semAdvertisingCost",
-    header: "SEM Ads",
-    cell: ({ row }) => formatCurrency(row.original.semAdvertisingCost)
   },
   {
     accessorKey: "netProfit",
@@ -117,16 +107,14 @@ const parentColumnLabels: Record<string, string> = {
   marketplace: "Marketplace",
   salesSource: "Source",
   quantity: "Units",
-  grossRevenue: "Gross Revenue",
-  netRevenue: "Net Revenue",
-  salesRefunds: "Refund Sales",
+  grossRevenue: "Gross Sales",
+  netRevenue: "Sales",
+  salesRefunds: "Refunds",
   commissionFees: "Commission",
   fulfillmentFees: "Fulfillment",
-  otherSettlementFees: "Other Fees",
   cogs: "COGS",
   missingCogsUnits: "COGS Status",
   walmartConnectAdvertisingCost: "Walmart Connect Ads",
-  semAdvertisingCost: "SEM Ads",
   netProfit: "Profit",
   netMarginPercent: "Profit Margin",
   profitPerUnit: "Profit / Unit",
@@ -421,16 +409,12 @@ function renderSkuChildCell(
       return formatCurrency(row.commissionFees);
     case "fulfillmentFees":
       return formatCurrency(row.fulfillmentFees);
-    case "otherSettlementFees":
-      return formatCurrency(getOtherSettlementFees(row));
     case "cogs":
       return formatCurrency(row.cogs);
     case "missingCogsUnits":
       return <CogsStatusBadge missingUnits={row.missingCogsUnits} />;
     case "walmartConnectAdvertisingCost":
       return formatCurrency(row.walmartConnectAdvertisingCost);
-    case "semAdvertisingCost":
-      return formatCurrency(row.semAdvertisingCost);
     case "netProfit":
       return <span className="font-semibold text-slate-800">{formatCurrency(row.netProfit)}</span>;
     case "netMarginPercent":
@@ -502,12 +486,10 @@ function OrderHistoryChildRow({ colSpan, rows }: { colSpan: number; rows: SkuPnl
                   <th className="border-b border-slate-200 px-4 py-3 font-semibold">Source</th>
                   <th className="border-b border-slate-200 px-4 py-3 font-semibold">Status</th>
                   <th className="border-b border-slate-200 px-4 py-3 font-semibold">Units</th>
-                  <th className="border-b border-slate-200 px-4 py-3 font-semibold">Net Revenue</th>
-                  <th className="border-b border-slate-200 px-4 py-3 font-semibold">Refund Sales</th>
-                  <th className="border-b border-slate-200 px-4 py-3 font-semibold">Refund Adjustments</th>
+                  <th className="border-b border-slate-200 px-4 py-3 font-semibold">Sales</th>
+                  <th className="border-b border-slate-200 px-4 py-3 font-semibold">Refunds</th>
                   <th className="border-b border-slate-200 px-4 py-3 font-semibold">Commission</th>
                   <th className="border-b border-slate-200 px-4 py-3 font-semibold">Fulfillment</th>
-                  <th className="border-b border-slate-200 px-4 py-3 font-semibold">Other Fees</th>
                   <th className="border-b border-slate-200 px-4 py-3 font-semibold">COGS</th>
                   <th className="border-b border-slate-200 px-4 py-3 font-semibold">Profit</th>
                 </tr>
@@ -530,10 +512,8 @@ function OrderHistoryChildRow({ colSpan, rows }: { colSpan: number; rows: SkuPnl
                       <td className="px-4 py-3 text-slate-700">{formatNumber(row.quantity)}</td>
                       <td className="px-4 py-3 text-slate-700">{formatCurrency(row.netRevenue)}</td>
                       <td className="px-4 py-3 text-slate-700">{formatCurrency(row.salesRefunds)}</td>
-                      <td className="px-4 py-3 text-slate-700">{formatCurrency(row.refunds)}</td>
                       <td className="px-4 py-3 text-slate-700">{formatCurrency(row.commissionFees)}</td>
                       <td className="px-4 py-3 text-slate-700">{formatCurrency(row.fulfillmentFees)}</td>
-                      <td className="px-4 py-3 text-slate-700">{formatCurrency(getOtherSettlementFees(row))}</td>
                       <td className="px-4 py-3 text-slate-700">{formatCurrency(row.cogs)}</td>
                       <td className="px-4 py-3 font-semibold text-slate-800">
                         {formatCurrency(row.netProfit)}
@@ -542,7 +522,7 @@ function OrderHistoryChildRow({ colSpan, rows }: { colSpan: number; rows: SkuPnl
                   ))
                 ) : (
                   <tr>
-                    <td className="px-4 py-10 text-center text-slate-500" colSpan={13}>
+                    <td className="px-4 py-10 text-center text-slate-500" colSpan={11}>
                       No order rows match this SKU and filter set.
                     </td>
                   </tr>
@@ -554,18 +534,6 @@ function OrderHistoryChildRow({ colSpan, rows }: { colSpan: number; rows: SkuPnl
       </td>
     </tr>
   );
-}
-
-function getOtherSettlementFees({
-  commissionFees,
-  fulfillmentFees,
-  marketplaceFees
-}: {
-  commissionFees: number;
-  fulfillmentFees: number;
-  marketplaceFees: number;
-}) {
-  return marketplaceFees - commissionFees - fulfillmentFees;
 }
 
 function getParentColumnLabel(columnId: string) {

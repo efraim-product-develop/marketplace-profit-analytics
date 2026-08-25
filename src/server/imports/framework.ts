@@ -20,29 +20,32 @@ export const importKindConfigs: Record<ImportKind, ImportKindConfig> = {
     kind: "sales",
     eyebrow: "Imports",
     title: "Sales Reports",
-    description: "Upload daily marketplace sales reports, preview detected rows, then import them into P&L.",
-    fileHelp: "Supports Walmart daily Item Sales reports. PO/order reports remain available for audit imports."
+    description: "Upload marketplace order reports, preview detected rows, then import them into P&L.",
+    fileHelp: "Supports Walmart PO reports as the Walmart sales source."
   },
   settlements: {
     kind: "settlements",
     eyebrow: "Imports",
     title: "Settlement Reports",
     description: "Upload marketplace settlement reports through the shared import pipeline.",
-    fileHelp: "Supports Walmart Payments New reports for fulfillment fees, settlement fees, and SEM spend."
+    fileHelp:
+      "Supports Walmart Payments New reports for refunds, commission, fulfillment fees, other Walmart fees, and settlement payout tracking. Seller Center SEM is handled by a separate report."
   },
   advertising: {
     kind: "advertising",
     eyebrow: "Imports",
-    title: "Advertising Reports",
-    description: "Upload advertising reports through the shared import pipeline.",
-    fileHelp: "Ready for future advertising report parsers."
+    title: "Seller Center SEM Reports",
+    description: "Upload Seller Center SEM reports through the shared import pipeline.",
+    fileHelp: "Supports Walmart Seller Center campaign-level daily SEM reports."
   },
   inventory: {
     kind: "inventory",
     eyebrow: "Imports",
-    title: "Inventory Reports",
-    description: "Upload inventory reports through the shared import pipeline.",
-    fileHelp: "Ready for future inventory report parsers."
+    title: "SKU / Parent Mapping",
+    description:
+      "Upload product hierarchy reports that map child SKUs to parent products without changing sales or P&L values.",
+    fileHelp:
+      "Supports Walmart Item Sales as product mapping only. Financial Item Sales columns are ignored."
   }
 };
 
@@ -91,7 +94,11 @@ export async function createImportPreview({
     fileHash
   });
 
-  if (duplicate && shouldBlockDuplicateImport(duplicate, parsed.duplicateVersion)) {
+  if (
+    duplicate &&
+    !parsed.allowDuplicateFileImport &&
+    shouldBlockDuplicateImport(duplicate, parsed.duplicateVersion)
+  ) {
     const previewRows = buildPreviewRowData(organizationId, parsed.previewRows);
     return importDb.importRun.create({
       data: {
@@ -111,6 +118,7 @@ export async function createImportPreview({
         summary: toJsonValue({
           ...parsed.summary,
           ...(parsed.duplicateVersion ? { duplicateVersion: parsed.duplicateVersion } : {}),
+          ...(parsed.allowDuplicateFileImport ? { allowDuplicateFileImport: true } : {}),
           duplicateOf: duplicate.id
         }),
         parsedPayload: parsed.payload,
@@ -154,7 +162,8 @@ export async function createImportPreview({
       options: toJsonValue(options),
       summary: toJsonValue({
         ...parsed.summary,
-        ...(parsed.duplicateVersion ? { duplicateVersion: parsed.duplicateVersion } : {})
+        ...(parsed.duplicateVersion ? { duplicateVersion: parsed.duplicateVersion } : {}),
+        ...(parsed.allowDuplicateFileImport ? { allowDuplicateFileImport: true } : {})
       }),
       parsedPayload: parsed.payload,
       ...(issues.length ? { issues: { createMany: { data: issues } } } : {}),
@@ -193,7 +202,9 @@ export async function commitImportRun({
 
   const duplicateVersion = optionalString(toRecord(importRun.summary).duplicateVersion);
 
-  if (duplicate && shouldBlockDuplicateImport(duplicate, duplicateVersion)) {
+  const allowDuplicateFileImport = toRecord(importRun.summary).allowDuplicateFileImport === true;
+
+  if (duplicate && !allowDuplicateFileImport && shouldBlockDuplicateImport(duplicate, duplicateVersion)) {
     return importDb.importRun.update({
       where: { id: importRun.id },
       data: {

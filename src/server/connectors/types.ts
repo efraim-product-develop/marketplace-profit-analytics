@@ -6,7 +6,6 @@ import type {
   ParsedSalesWorkbook,
   SalesParseOptions
 } from "@/server/sales/parser";
-import type { ParsedSalesUploadWorkbook } from "@/server/sales/upload-types";
 import type { ImportReportParser } from "@/server/imports/types";
 
 export type MarketplaceConnector = {
@@ -26,6 +25,5 @@ export type MarketplaceConnector = {
     buffer: Buffer,
     options?: SalesParseOptions
   ) => ParsedSalesWorkbook;
-  parseSalesUploadWorkbook?: (buffer: Buffer) => ParsedSalesUploadWorkbook;
   importParsers?: ImportReportParser[];
 };

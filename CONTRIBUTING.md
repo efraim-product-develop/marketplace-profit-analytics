@@ -197,7 +197,7 @@ Use consistent names across the app:
 - `externalLineId`: marketplace line ID or generated aggregate line ID.
 - `marketplaceItemId`: marketplace item/product ID.
 - `importKind`: `sales`, `settlements`, `advertising`, or `inventory`.
-- `reportType`: stable parser/report identifier, such as `walmart_item_sales`.
+- `reportType`: stable parser/report identifier, such as `walmart_po_order_sales`.
 - `reportTypeLabel`: human-readable report label.
 - `sourceRow`: original spreadsheet row number.
 

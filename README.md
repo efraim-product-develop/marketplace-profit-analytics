@@ -40,11 +40,11 @@ A local Next.js 14 TypeScript app for marketplace P&L analytics. The first conne
    Required variables:
 
    - `DATABASE_URL`: app database connection.
-   - `DIRECT_URL`: direct database connection used by Prisma migrations.
+   - `DIRECT_URL`: Prisma migration/CLI connection.
 
    For local Docker Postgres, both values can match `.env.example`. For Supabase,
-   use the pooled connection for `DATABASE_URL` and the direct connection for
-   `DIRECT_URL`.
+   use the app/runtime connection for `DATABASE_URL` and the Supavisor Session
+   pooler on port `5432` for `DIRECT_URL`.
 
 3. Start PostgreSQL:
 
@@ -102,20 +102,30 @@ Useful VS Code commands:
 
 ## Supabase Connection Setup
 
-For Supabase, keep `DATABASE_URL` pointed at the pooled connection for the app and set
-`DIRECT_URL` to the direct database connection for Prisma migrations. This avoids
-session-pool exhaustion during `prisma migrate deploy`.
+For Supabase, keep `DATABASE_URL` pointed at the app/runtime connection and set
+`DIRECT_URL` to the Supavisor Session pooler connection on port `5432` for Prisma
+migrations. This avoids relying on the direct `db.PROJECT_REF.supabase.co` host,
+which may be unreachable from local Windows development.
 
 If your `.env` already has the Supabase pooled `DATABASE_URL`, run:
 
 ```bash
-pnpm run supabase:direct-url
+pnpm run supabase:session-url
 pnpm run prisma:deploy
 ```
 
 The helper derives `DIRECT_URL` from the existing Supabase pooler URL without
-printing the password. If your Supabase project blocks direct connections, copy
-the direct connection string from Supabase Database settings into `DIRECT_URL`.
+printing the password. It writes a Session pooler URL in this general shape:
+
+```text
+postgresql://postgres.PROJECT_REF:PASSWORD@REGION.pooler.supabase.com:5432/postgres?sslmode=require
+```
+
+If the helper cannot determine your project reference, copy the Session pooler
+connection string from Supabase Database settings into `DIRECT_URL`.
+
+The older `pnpm run supabase:direct-url` command is still available as a
+backward-compatible alias, but it now writes the Session pooler URL as well.
 
 If the direct host is not reachable from your local network and Supabase reports
 `RLS Disabled in Public` for `public._prisma_migrations`, apply only that advisor
@@ -124,6 +134,34 @@ fix through the pooled app connection:
 ```bash
 pnpm run supabase:fix-rls-advisor
 ```
+
+## Walmart API Connection Setup
+
+The app can test Walmart Marketplace API credentials from `/connections`.
+
+Open `/connections` and use the Walmart Marketplace API form to save these
+values locally:
+
+```env
+WALMART_MARKETPLACE_CLIENT_ID="your-client-id"
+WALMART_MARKETPLACE_CLIENT_SECRET="your-client-secret"
+WALMART_MARKET="us"
+WALMART_SERVICE_NAME="Walmart Marketplace"
+WALMART_API_BASE_URL="https://marketplace.walmartapis.com"
+```
+
+Optional values:
+
+```env
+WALMART_CONSUMER_CHANNEL_TYPE=""
+WALMART_SELLER_ID=""
+```
+
+Then click `Test API connection`.
+
+Real secrets stay in `.env`. The database stores only connection status, the
+credential reference, and non-secret test metadata. The first API test requests a
+short-lived Walmart token; it does not import or sync reports yet.
 
 ## Pages
 
@@ -134,7 +172,6 @@ pnpm run supabase:fix-rls-advisor
 - `/imports/settlements`
 - `/imports/advertising`
 - `/imports/inventory`
-- `/sales/upload`
 - `/advertising/upload`
 - `/pnl/sku`
 - `/pnl/parent`
@@ -160,45 +197,31 @@ Rows are previewed before import. The import creates or updates the parent produ
 
 ## Sales Upload Format
 
-Use `/imports/sales` for the reusable import framework. It automatically detects supported Walmart report types, previews rows, validates data, blocks duplicate file imports, saves import history, and then commits importable reports to the P&L tables.
+Use `/imports/sales` for the reusable import framework. It automatically detects the supported Walmart sales report, previews rows, validates data, blocks duplicate file imports, saves import history, and commits importable rows to the P&L tables.
 
-The sales uploader accepts Excel or CSV files with columns such as:
+The current Walmart sales architecture is:
 
-- `order id`
-- `order date`
-- `seller sku`
-- `quantity`
-- `item revenue` or `unit price`
-- `fee amount`
-- `fee type`
-- `parent sku`
+- PO reports provide the Walmart sales source using Walmart's true order date.
+- Settlement reports provide refunds, marketplace commission, fulfillment fees, other Walmart fees and adjustments, and payout as separate financial inputs.
+- Settlement sale/product rows do not replace PO sales rows.
+- Retired Walmart sales summary/account summary files are not used for P&L or reconciliation.
 
-Re-importing the same order replaces that order's existing imported lines and fees.
+The normal sales workflow supports Walmart PO uploads through `/imports/sales`.
 
-For Walmart, `/sales/upload` supports Seller Center PO/order reports from the `Po Details` sheet. These are the preferred sales source because they include real order dates, PO numbers, line numbers, SKUs, quantities, item cost, shipping, tax, status, and fulfillment entity. Canceled rows are skipped so they do not inflate P&L.
+The PO sales uploader accepts Excel or CSV files with order-line fields such as:
 
-The importer also supports the Walmart Item Sales Report CSV. Choose the report month on the upload form; each SKU row is imported as a monthly aggregate sales line, using `Base_Item_Id` as the parent grouping key and `GMV_Minus_Commission` to create commission fees.
-
-Walmart `Overview.csv` is no longer supported for import or reconciliation. Use Item Sales reports for monthly Seller Center totals and PO/order reports for order-level audit.
-
-Use `/sales/upload` for direct Walmart Seller Center sales/order exports when you want a simple preview-and-import workflow. It supports `.xlsx`, `.xls`, and `.csv`, previews parsed rows before saving, and imports into generic orders, order items, categorized fee rows, and refunds.
-
-Direct sales upload normalizes:
-
-- order ID
-- optional order line ID
-- order date
 - SKU
-- quantity
-- item price or gross sales
-- shipping revenue
-- tax collected
-- discount amount
-- order status
-- marketplace, fulfillment, shipping, storage, return, and adjustment fees
-- refund amount and refund date
+- PO number
+- PO line number
+- Customer order number
+- Customer Order ID
+- Order Date
+- Quantity
+- Item Price
+- Order Status
+- Fulfillment type when present
 
-Direct sales upload upserts by `organizationId + marketplace + externalOrderId + sku`. If a matching order/SKU line already exists, the existing line, fees, and refunds are replaced.
+PO rows use the true PO order date. Re-uploading the same PO number and line updates the existing row instead of duplicating it. The app does not substitute another sales source when PO or settlement data is missing.
 
 After pulling schema changes, apply migrations and regenerate Prisma:
 

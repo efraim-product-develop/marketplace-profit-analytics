@@ -43,19 +43,19 @@ function getColumns(currentQueryString: string): ColumnDef<ProfitRow>[] {
     cell: ({ row }) => formatNumber(row.original.quantity)
   },
   {
+    accessorKey: "grossRevenue",
+    header: "Gross Sales",
+    cell: ({ row }) => formatCurrency(row.original.grossRevenue)
+  },
+  {
     accessorKey: "netRevenue",
-    header: "Net Revenue",
+    header: "Sales",
     cell: ({ row }) => formatCurrency(row.original.netRevenue)
   },
   {
     accessorKey: "salesRefunds",
-    header: "Refund Sales",
+    header: "Refunds",
     cell: ({ row }) => formatCurrency(row.original.salesRefunds)
-  },
-  {
-    accessorKey: "refunds",
-    header: "Refund Adjustments",
-    cell: ({ row }) => formatCurrency(row.original.refunds)
   },
   {
     accessorKey: "commissionFees",
@@ -66,11 +66,6 @@ function getColumns(currentQueryString: string): ColumnDef<ProfitRow>[] {
     accessorKey: "fulfillmentFees",
     header: "Fulfillment",
     cell: ({ row }) => formatCurrency(row.original.fulfillmentFees)
-  },
-  {
-    id: "otherSettlementFees",
-    header: "Other Fees",
-    cell: ({ row }) => formatCurrency(getOtherSettlementFees(row.original))
   },
   {
     accessorKey: "cogs",
@@ -86,11 +81,6 @@ function getColumns(currentQueryString: string): ColumnDef<ProfitRow>[] {
     accessorKey: "walmartConnectAdvertisingCost",
     header: "Walmart Connect Ads",
     cell: ({ row }) => formatCurrency(row.original.walmartConnectAdvertisingCost)
-  },
-  {
-    accessorKey: "semAdvertisingCost",
-    header: "SEM Ads",
-    cell: ({ row }) => formatCurrency(row.original.semAdvertisingCost)
   },
   {
     accessorKey: "netProfit",
@@ -123,18 +113,6 @@ function getColumns(currentQueryString: string): ColumnDef<ProfitRow>[] {
       )
   }
   ];
-}
-
-function getOtherSettlementFees({
-  commissionFees,
-  fulfillmentFees,
-  marketplaceFees
-}: {
-  commissionFees: number;
-  fulfillmentFees: number;
-  marketplaceFees: number;
-}) {
-  return marketplaceFees - commissionFees - fulfillmentFees;
 }
 
 export function SkuPnlTable({

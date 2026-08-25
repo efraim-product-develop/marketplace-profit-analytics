@@ -53,12 +53,7 @@ export type ProfitLineInput = {
   refunds?: ProfitRefundInput[];
 };
 
-export type PnlSalesSourceKind =
-  | "item_sales_daily_summary"
-  | "item_sales_monthly_summary"
-  | "po_order_detail"
-  | "mixed"
-  | "none";
+export type PnlSalesSourceKind = "po_report" | "none";
 
 export type PnlSalesSourceSummary = {
   kind: PnlSalesSourceKind;
@@ -74,6 +69,15 @@ export type ProfitGroupKey = {
   sellerSku?: string;
   parentSku?: string;
   label: string;
+};
+
+export type OtherFeeCategoryBreakdownRow = {
+  category: string;
+  categoryName: string;
+  transactionCount: number;
+  charges: number;
+  credits: number;
+  netAmount: number;
 };
 
 export type ProfitRow = ProfitGroupKey & {
@@ -95,6 +99,7 @@ export type ProfitRow = ProfitGroupKey & {
   returnFees: number;
   adjustmentFees: number;
   otherFees: number;
+  otherFeeCategoryBreakdown: OtherFeeCategoryBreakdownRow[];
   semAdvertisingCost: number;
   walmartConnectAdvertisingCost: number;
   advertisingCost: number;
@@ -124,6 +129,21 @@ export type PnlSettlementAllocationSummary = {
   missingPeriodMetadataCount: number;
 };
 
+export type ProductAttributionDiagnostics = {
+  attributableRefunds: number;
+  unallocatedRefunds: number;
+  attributableCommission: number;
+  unallocatedCommission: number;
+  attributableFulfillmentFees: number;
+  unallocatedFulfillmentFees: number;
+  attributableWalmartConnectAdvertising: number;
+  unallocatedWalmartConnectAdvertising: number;
+  totalWalmartConnectAdvertising: number;
+  walmartConnectAdvertisingReconciliationDifference: number;
+  sellerCenterSemAdvertising: number;
+  marketplaceOnlyOtherWalmartFees: number;
+};
+
 export type ParentPnlPeriodTile = {
   periodKey: string;
   label: string;
@@ -131,6 +151,7 @@ export type ParentPnlPeriodTile = {
   from: string;
   to: string;
   salesSource: PnlSalesSourceSummary;
+  grossRevenue: number;
   netRevenue: number;
   netRevenueChangePercent: number | null;
   orderCount: number;
@@ -146,6 +167,8 @@ export type ParentPnlPeriodTile = {
   returnFees: number;
   adjustmentFees: number;
   otherFees: number;
+  otherWalmartFeesAndAdjustments: number;
+  otherFeeCategoryBreakdown: OtherFeeCategoryBreakdownRow[];
   semAdvertisingCost: number;
   walmartConnectAdvertisingCost: number;
   advertisingCost: number;
@@ -166,6 +189,7 @@ export type ParentPnlMonthlyComparisonRow = {
   from: string;
   to: string;
   salesSource: PnlSalesSourceSummary;
+  grossRevenue: number;
   netRevenue: number;
   netRevenueChangePercent: number | null;
   orderCount: number;
@@ -180,6 +204,8 @@ export type ParentPnlMonthlyComparisonRow = {
   returnFees: number;
   adjustmentFees: number;
   otherFees: number;
+  otherWalmartFeesAndAdjustments: number;
+  otherFeeCategoryBreakdown: OtherFeeCategoryBreakdownRow[];
   semAdvertisingCost: number;
   walmartConnectAdvertisingCost: number;
   advertisingCost: number;
@@ -190,6 +216,20 @@ export type ParentPnlMonthlyComparisonRow = {
   netMarginPercent: number;
   profitPerUnit: number;
   missingCogsUnits: number;
+};
+
+export type SettlementPayoutHistoryRow = {
+  id: string;
+  marketplace: MarketplaceCode;
+  settlementReference: string;
+  settlementPeriodStart: Date | null;
+  settlementPeriodEnd: Date | null;
+  payoutAmount: number;
+  payoutDate: Date | null;
+  currency: string;
+  source: string;
+  originalFileName: string | null;
+  importedAt: Date;
 };
 
 export type ParentSkuFilterOption = {

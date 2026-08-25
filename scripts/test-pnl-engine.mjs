@@ -9,7 +9,7 @@ const tests = [
         [
           {
             marketplace: "walmart",
-            salesSource: "item_sales_daily_summary",
+            salesSource: "po_report",
             sellerSku: "CHILD-SKU-1",
             parentSku: "PARENT-SKU-1",
             quantity: 1,
@@ -37,13 +37,92 @@ const tests = [
     }
   },
   {
-    name: "uses item revenue only for PO sales and tracks shipping/discount separately",
+    name: "marketplace summary includes unallocated Walmart Connect spend",
     run() {
       const rows = calculateProfitRows(
         [
           {
             marketplace: "walmart",
-            salesSource: "po_order_detail",
+            salesSource: "po_report",
+            sellerSku: "SKU-1",
+            parentSku: "PARENT-1",
+            quantity: 1,
+            itemRevenue: 100
+          }
+        ],
+        "parentSku",
+        [
+          {
+            marketplace: "walmart",
+            sellerSku: "SKU-1",
+            parentSku: "PARENT-1",
+            source: "walmart_connect_item_performance",
+            amount: 5
+          },
+          {
+            marketplace: "walmart",
+            sellerSku: null,
+            parentSku: null,
+            source: "walmart_connect_item_performance",
+            amount: 7
+          },
+          {
+            marketplace: "walmart",
+            sellerSku: null,
+            parentSku: null,
+            source: "walmart_seller_center_sem",
+            amount: 3
+          }
+        ]
+      );
+      const summary = summarizeProfit(rows);
+
+      assert.equal(summary.walmartConnectAdvertisingCost, 12);
+      assert.equal(summary.semAdvertisingCost, 3);
+      assert.equal(summary.advertisingCost, 15);
+      assert.equal(summary.netProfit, 85);
+    }
+  },
+  {
+    name: "product summary excludes unallocated Walmart Connect spend when filtered before calculation",
+    run() {
+      const rows = calculateProfitRows(
+        [
+          {
+            marketplace: "walmart",
+            salesSource: "po_report",
+            sellerSku: "SKU-1",
+            parentSku: "PARENT-1",
+            quantity: 1,
+            itemRevenue: 100
+          }
+        ],
+        "parentSku",
+        [
+          {
+            marketplace: "walmart",
+            sellerSku: "SKU-1",
+            parentSku: "PARENT-1",
+            source: "walmart_connect_item_performance",
+            amount: 5
+          }
+        ]
+      );
+      const summary = summarizeProfit(rows);
+
+      assert.equal(summary.walmartConnectAdvertisingCost, 5);
+      assert.equal(summary.advertisingCost, 5);
+      assert.equal(summary.netProfit, 95);
+    }
+  },
+  {
+    name: "uses PO item revenue as gross sales and tracks shipping/discount separately",
+    run() {
+      const rows = calculateProfitRows(
+        [
+          {
+            marketplace: "walmart",
+            salesSource: "po_report",
             sellerSku: "SKU-1",
             parentSku: "PARENT-1",
             quantity: 2,
@@ -104,13 +183,122 @@ const tests = [
     }
   },
   {
-    name: "tracks Item Sales refund sales without subtracting them as a second refund expense",
+    name: "cancellation is excluded from gross sales and does not create a refund",
     run() {
       const rows = calculateProfitRows(
         [
           {
             marketplace: "walmart",
-            salesSource: "item_sales_monthly_summary",
+            salesSource: "none",
+            orderStatus: "Cancelled",
+            sellerSku: "SKU-CANCELLED",
+            parentSku: "PARENT-CANCELLED",
+            quantity: 0,
+            itemRevenue: 100,
+            cogsTotal: 25
+          }
+        ],
+        "sellerSku"
+      );
+
+      assert.equal(rows.length, 0);
+    }
+  },
+  {
+    name: "settlement refund reduces sales and is not deducted again from profit",
+    run() {
+      const rows = calculateProfitRows(
+        [
+          {
+            marketplace: "walmart",
+            salesSource: "po_report",
+            sellerSku: "SKU-REFUND-ONCE",
+            parentSku: "PARENT-REFUND",
+            quantity: 1,
+            itemRevenue: 100,
+            cogsTotal: 30,
+            fees: [fee("commission", -10), fee("fulfillment_fee", -5)]
+          }
+        ],
+        "sellerSku",
+        [
+          {
+            marketplace: "walmart",
+            sellerSku: "SKU-REFUND-ONCE",
+            parentSku: "PARENT-REFUND",
+            source: "walmart_connect_item_performance",
+            amount: 7
+          },
+          {
+            marketplace: "walmart",
+            sellerSku: "SKU-REFUND-ONCE",
+            parentSku: "PARENT-REFUND",
+            source: "walmart_seller_center_sem",
+            amount: 3
+          }
+        ],
+        [fee("storage_fee", -2, "SKU-REFUND-ONCE", "PARENT-REFUND")],
+        [
+          {
+            marketplace: "walmart",
+            sellerSku: "SKU-REFUND-ONCE",
+            parentSku: "PARENT-REFUND",
+            amount: -20
+          }
+        ]
+      );
+      const [row] = rows;
+
+      assert.equal(row.grossRevenue, 100);
+      assert.equal(row.salesRefunds, 20);
+      assert.equal(row.netRevenue, 80);
+      assert.equal(row.netProfit, 23);
+    }
+  },
+  {
+    name: "cancellation plus settlement refund does not double deduct sales",
+    run() {
+      const rows = calculateProfitRows(
+        [
+          {
+            marketplace: "walmart",
+            salesSource: "none",
+            orderStatus: "Cancelled",
+            sellerSku: "SKU-CANCELLED-REFUND",
+            parentSku: "PARENT-CANCELLED",
+            quantity: 0,
+            itemRevenue: 100
+          }
+        ],
+        "sellerSku",
+        [],
+        [],
+        [
+          {
+            marketplace: "walmart",
+            sellerSku: "SKU-CANCELLED-REFUND",
+            parentSku: "PARENT-CANCELLED",
+            amount: 20
+          }
+        ]
+      );
+      const [row] = rows;
+
+      assert.equal(rows.length, 1);
+      assert.equal(row.grossRevenue, 0);
+      assert.equal(row.salesRefunds, 20);
+      assert.equal(row.netRevenue, -20);
+      assert.equal(row.netProfit, -20);
+    }
+  },
+  {
+    name: "subtracts refund sales from PO report revenue",
+    run() {
+      const rows = calculateProfitRows(
+        [
+          {
+            marketplace: "walmart",
+            salesSource: "po_report",
             sellerSku: "SKU-SUMMARY",
             parentSku: "PARENT-SUMMARY",
             quantity: 10,
@@ -132,13 +320,116 @@ const tests = [
     }
   },
   {
+    name: "applies standalone settlement refunds to matching PO report sales",
+    run() {
+      const rows = calculateProfitRows(
+        [
+          {
+            marketplace: "walmart",
+            salesSource: "po_report",
+            sellerSku: "SKU-REFUND",
+            parentSku: "PARENT-REFUND",
+            quantity: 10,
+            itemRevenue: 500,
+            salesRefunds: 25,
+            cogsTotal: 100
+          }
+        ],
+        "sellerSku",
+        [],
+        [],
+        [
+          {
+            marketplace: "walmart",
+            sellerSku: "SKU-REFUND",
+            parentSku: "PARENT-REFUND",
+            amount: 25
+          }
+        ]
+      );
+      const [row] = rows;
+
+      assert.equal(row.netRevenue, 450);
+      assert.equal(row.salesRefunds, 50);
+      assert.equal(row.grossProfit, 350);
+      assert.equal(row.netProfit, 350);
+    }
+  },
+  {
+    name: "uses standalone settlement refunds when PO report sales have no row-level refunds",
+    run() {
+      const rows = calculateProfitRows(
+        [
+          {
+            marketplace: "walmart",
+            salesSource: "po_report",
+            sellerSku: "SKU-REFUND-FALLBACK",
+            parentSku: "PARENT-REFUND",
+            quantity: 10,
+            itemRevenue: 500,
+            salesRefunds: 0,
+            cogsTotal: 100
+          }
+        ],
+        "sellerSku",
+        [],
+        [],
+        [
+          {
+            marketplace: "walmart",
+            sellerSku: "SKU-REFUND-FALLBACK",
+            parentSku: "PARENT-REFUND",
+            amount: 25
+          }
+        ]
+      );
+      const [row] = rows;
+
+      assert.equal(row.netRevenue, 475);
+      assert.equal(row.salesRefunds, 25);
+      assert.equal(row.grossProfit, 375);
+      assert.equal(row.netProfit, 375);
+    }
+  },
+  {
+    name: "sums multiple standalone settlement refunds for the same group",
+    run() {
+      const rows = calculateProfitRows(
+        [],
+        "parentSku",
+        [],
+        [],
+        [
+          {
+            marketplace: "walmart",
+            sellerSku: "SKU-REFUND-A",
+            parentSku: "PARENT-REFUND",
+            amount: 10
+          },
+          {
+            marketplace: "walmart",
+            sellerSku: "SKU-REFUND-B",
+            parentSku: "PARENT-REFUND",
+            amount: 15
+          }
+        ]
+      );
+      const [row] = rows;
+
+      assert.equal(row.parentSku, "PARENT-REFUND");
+      assert.equal(row.netRevenue, -25);
+      assert.equal(row.salesRefunds, 25);
+      assert.equal(row.netProfit, -25);
+    }
+  },
+  {
     name: "classifies marketplace fee categories and treats positive adjustments as credits",
     run() {
       const rows = calculateProfitRows(
         [
           {
             marketplace: "walmart",
-            salesSource: "po_order_detail",
+            salesSource: "po_report",
             sellerSku: "SKU-2",
             parentSku: "PARENT-2",
             quantity: 1,
@@ -177,7 +468,7 @@ const tests = [
         [
           {
             marketplace: "walmart",
-            salesSource: "po_order_detail",
+            salesSource: "po_report",
             sellerSku: "SKU-SIGNED",
             parentSku: "PARENT-SIGNED",
             quantity: 1,
@@ -207,6 +498,16 @@ const tests = [
       const [row] = rows;
 
       assert.equal(row.otherFees, 7);
+      assert.deepEqual(row.otherFeeCategoryBreakdown, [
+        {
+          category: "other",
+          categoryName: "Other",
+          transactionCount: 2,
+          charges: 12,
+          credits: 5,
+          netAmount: 7
+        }
+      ]);
       assert.equal(row.marketplaceFees, 7);
       assert.equal(row.grossProfit, 93);
       assert.equal(row.netProfit, 93);
@@ -256,7 +557,7 @@ const tests = [
         [
           {
             marketplace: "walmart",
-            salesSource: "po_order_detail",
+            salesSource: "po_report",
             sellerSku: "SKU-4",
             parentSku: "PARENT-4",
             quantity: 4,
@@ -266,7 +567,7 @@ const tests = [
           },
           {
             marketplace: "walmart",
-            salesSource: "po_order_detail",
+            salesSource: "po_report",
             sellerSku: "SKU-5",
             parentSku: "PARENT-5",
             quantity: 1,
@@ -325,11 +626,11 @@ for (const test of tests) {
   console.log(`ok - ${test.name}`);
 }
 
-function fee(feeType, amount) {
+function fee(feeType, amount, sellerSku = "SKU-2", parentSku = "PARENT-2") {
   return {
     marketplace: "walmart",
-    sellerSku: "SKU-2",
-    parentSku: "PARENT-2",
+    sellerSku,
+    parentSku,
     feeType,
     amount
   };

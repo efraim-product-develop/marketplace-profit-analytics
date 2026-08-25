@@ -3,6 +3,7 @@ import type {
   ProfitFeeInput,
   ProfitGroupKey,
   ProfitLineInput,
+  OtherFeeCategoryBreakdownRow,
   ProfitRefundInput,
   ProfitRow
 } from "./types";
@@ -22,16 +23,21 @@ export function calculateProfitRows(
   const parentSkuBySellerSku = buildParentSkuBySellerSku(lines);
 
   for (const line of lines) {
+    if (!isSupportedSalesLine(line)) {
+      continue;
+    }
+
     const key = getGroupKey(line, groupBy);
     const existing = groups.get(key.label) ?? createEmptyProfitRow(key);
     const grossRevenue = line.itemRevenue;
     const discounts = line.discountAmount ?? 0;
     const salesRefunds = (line.salesRefunds ?? 0) + sumRefunds(line.refunds ?? []);
+    const netRevenue = grossRevenue - salesRefunds;
 
     existing.quantity += line.quantity;
     existing.grossRevenue += grossRevenue;
     existing.discounts += discounts;
-    existing.netRevenue += grossRevenue - salesRefunds;
+    existing.netRevenue += netRevenue;
     existing.salesRefunds += salesRefunds;
     existing.taxCollected += line.taxCollected ?? 0;
     for (const fee of line.fees ?? []) {
@@ -59,6 +65,7 @@ export function calculateProfitRows(
     const key = getRefundGroupKey(refund, groupBy);
     const existing = groups.get(key.label) ?? createEmptyProfitRow(key);
     const salesRefund = Math.abs(refund.amount);
+
     existing.salesRefunds += salesRefund;
     existing.netRevenue -= salesRefund;
     recalculateRowProfit(existing);
@@ -96,6 +103,10 @@ export function summarizeProfit(rows: ProfitRow[]) {
       total.returnFees += row.returnFees;
       total.adjustmentFees += row.adjustmentFees;
       total.otherFees += row.otherFees;
+      total.otherFeeCategoryBreakdown = mergeOtherFeeBreakdowns(
+        total.otherFeeCategoryBreakdown,
+        row.otherFeeCategoryBreakdown
+      );
       total.semAdvertisingCost += row.semAdvertisingCost;
       total.walmartConnectAdvertisingCost += row.walmartConnectAdvertisingCost;
       total.advertisingCost += row.advertisingCost;
@@ -125,6 +136,7 @@ export function summarizeProfit(rows: ProfitRow[]) {
       returnFees: 0,
       adjustmentFees: 0,
       otherFees: 0,
+      otherFeeCategoryBreakdown: [] as OtherFeeCategoryBreakdownRow[],
       semAdvertisingCost: 0,
       walmartConnectAdvertisingCost: 0,
       advertisingCost: 0,
@@ -283,6 +295,7 @@ function createEmptyProfitRow(key: ProfitGroupKey): ProfitRow {
     returnFees: 0,
     adjustmentFees: 0,
     otherFees: 0,
+    otherFeeCategoryBreakdown: [],
     semAdvertisingCost: 0,
     walmartConnectAdvertisingCost: 0,
     advertisingCost: 0,
@@ -331,6 +344,10 @@ function sumRefunds(refunds: ProfitRefundInput[]) {
   return refunds.reduce((sum, refund) => sum + Math.abs(refund.amount), 0);
 }
 
+function isSupportedSalesLine(line: ProfitLineInput) {
+  return line.salesSource === "po_report";
+}
+
 function applyFee(row: ProfitRow, fee: ProfitFeeInput) {
   const feeAmount = getFeeExpenseAmount(fee);
 
@@ -345,20 +362,59 @@ function applyFee(row: ProfitRow, fee: ProfitFeeInput) {
       break;
     case "shipping":
       row.shippingFees += feeAmount;
+      addOtherFeeBreakdown(row, fee, feeAmount);
       break;
     case "storage":
       row.storageFees += feeAmount;
+      addOtherFeeBreakdown(row, fee, feeAmount);
       break;
     case "return":
       row.returnFees += feeAmount;
+      addOtherFeeBreakdown(row, fee, feeAmount);
       break;
     case "adjustment":
       row.adjustmentFees += feeAmount;
+      addOtherFeeBreakdown(row, fee, feeAmount);
       break;
     default:
       row.otherFees += feeAmount;
+      addOtherFeeBreakdown(row, fee, feeAmount);
       break;
   }
+}
+
+function addOtherFeeBreakdown(row: ProfitRow, fee: ProfitFeeInput, feeAmount: number) {
+  const category = readStringMetadata(fee.metadata, "adjustmentCategory") ?? getFeeCategory(fee.feeType);
+  const categoryName =
+    readStringMetadata(fee.metadata, "adjustmentCategoryLabel") ??
+    humanizeCategoryName(category);
+  const financialDirection =
+    readStringMetadata(fee.metadata, "financialDirection") ?? inferFinancialDirection(fee, feeAmount);
+  const existing =
+    row.otherFeeCategoryBreakdown.find((line) => line.category === category) ??
+    {
+      category,
+      categoryName,
+      transactionCount: 0,
+      charges: 0,
+      credits: 0,
+      netAmount: 0
+    };
+
+  existing.transactionCount += 1;
+  existing.netAmount = roundMoney(existing.netAmount + feeAmount);
+
+  if (financialDirection === "charge") {
+    existing.charges = roundMoney(existing.charges + Math.abs(feeAmount));
+  } else if (financialDirection === "credit") {
+    existing.credits = roundMoney(existing.credits + Math.abs(feeAmount));
+  }
+
+  if (!row.otherFeeCategoryBreakdown.some((line) => line.category === category)) {
+    row.otherFeeCategoryBreakdown.push(existing);
+  }
+
+  row.otherFeeCategoryBreakdown.sort((a, b) => Math.abs(b.netAmount) - Math.abs(a.netAmount));
 }
 
 function getFeeExpenseAmount(fee: ProfitFeeInput) {
@@ -373,6 +429,61 @@ function getFeeExpenseAmount(fee: ProfitFeeInput) {
   }
 
   return amount < 0 ? Math.abs(amount) : amount;
+}
+
+function mergeOtherFeeBreakdowns(
+  first: OtherFeeCategoryBreakdownRow[],
+  second: OtherFeeCategoryBreakdownRow[]
+) {
+  const merged = new Map<string, OtherFeeCategoryBreakdownRow>();
+
+  for (const line of [...first, ...second]) {
+    const existing =
+      merged.get(line.category) ??
+      {
+        category: line.category,
+        categoryName: line.categoryName,
+        transactionCount: 0,
+        charges: 0,
+        credits: 0,
+        netAmount: 0
+      };
+
+    existing.transactionCount += line.transactionCount;
+    existing.charges = roundMoney(existing.charges + line.charges);
+    existing.credits = roundMoney(existing.credits + line.credits);
+    existing.netAmount = roundMoney(existing.netAmount + line.netAmount);
+    merged.set(line.category, existing);
+  }
+
+  return Array.from(merged.values()).sort((a, b) => Math.abs(b.netAmount) - Math.abs(a.netAmount));
+}
+
+function readStringMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+) {
+  const value = metadata?.[key];
+
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function inferFinancialDirection(fee: ProfitFeeInput, feeAmount: number) {
+  if (usesSignedSettlementAmount(fee)) {
+    return fee.amount < 0 ? "charge" : fee.amount > 0 ? "credit" : "neutral";
+  }
+
+  return feeAmount >= 0 ? "charge" : "credit";
+}
+
+function humanizeCategoryName(category: string) {
+  return category
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 function usesSignedSettlementAmount(fee: ProfitFeeInput) {

@@ -62,6 +62,8 @@ export type ParsedSalesWorkbook = {
 export type SalesParseOptions = {
   reportMonth?: string;
   reportDate?: string;
+  reportStartDate?: string;
+  reportEndDate?: string;
 };
 
 const headerAliases: Record<SalesColumn, string[]> = {

@@ -3,8 +3,9 @@ import {
   type CogsParseOptions
 } from "@/server/cogs/parser";
 import type { MarketplaceConnector } from "@/server/connectors/types";
-import { parseWalmartSalesUploadWorkbook } from "./sales-upload";
-import { parseWalmartSalesWorkbook, walmartSalesImportParsers } from "./sales";
+import { walmartItemSalesMappingParser } from "./item-sales-mapping";
+import { walmartPoReportParser } from "./po-reports";
+import { walmartSellerCenterSemParser } from "./sem-advertising";
 import { walmartSettlementImportParsers } from "./settlements";
 
 const WALMART_MARKETPLACE = "walmart";
@@ -23,7 +24,7 @@ export const walmartConnector: MarketplaceConnector = {
     cogsUpload: true,
     orderImport: true,
     settlementImport: true,
-    apiConnection: false
+    apiConnection: true
   },
   parseCogsWorkbook(buffer, options = {}) {
     return parseGenericCogsWorkbook(buffer, {
@@ -32,11 +33,10 @@ export const walmartConnector: MarketplaceConnector = {
       headerAliases: walmartCogsAliases
     });
   },
-  parseSalesWorkbook(buffer, options = {}) {
-    return parseWalmartSalesWorkbook(buffer, options);
-  },
-  parseSalesUploadWorkbook(buffer) {
-    return parseWalmartSalesUploadWorkbook(buffer);
-  },
-  importParsers: [...walmartSalesImportParsers, ...walmartSettlementImportParsers]
+  importParsers: [
+    walmartPoReportParser,
+    walmartItemSalesMappingParser,
+    ...walmartSettlementImportParsers,
+    walmartSellerCenterSemParser
+  ]
 };

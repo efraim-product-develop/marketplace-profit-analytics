@@ -26,7 +26,7 @@ const navigation: Array<{
     href: "/imports",
     label: "Manual imports",
     icon: UploadCloud,
-    activePrefixes: ["/imports", "/cogs/upload", "/ad-spend/upload", "/sales/upload", "/advertising/upload"]
+    activePrefixes: ["/imports", "/cogs/upload", "/ad-spend/upload", "/advertising/upload"]
   },
   { href: "/cogs/audit", label: "COGS Audit", icon: FileSpreadsheet },
   { href: "/pnl/parent", label: "Parent P&L", icon: Boxes },
