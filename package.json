@@ -32,6 +32,7 @@
     "repair:walmart-sales-imports": "node scripts/repair-walmart-sales-import-status.mjs",
     "diagnose:po-quantity": "node scripts/diagnose-po-quantity.mjs",
     "audit:virtual-pack-parent-grouping": "node scripts/audit-virtual-pack-parent-grouping.mjs",
+    "catalog:map-sku-parent": "node scripts/map-sku-parent.mjs",
     "validate:product-pnl": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/validate-product-vs-marketplace-pnl.mjs"
   },
   "dependencies": {

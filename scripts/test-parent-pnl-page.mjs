@@ -7,7 +7,10 @@ import {
   parseParentPnlSearchParams
 } from "../src/server/pnl/parent-page.ts";
 import { resolveAdvertisingCostParentSku } from "../src/server/pnl/advertising-parent-resolution.ts";
-import { reconcileParentAdvertisingFromSkuRows } from "../src/server/pnl/parent-advertising-rollup.ts";
+import {
+  appendMissingCatalogChildSkuRows,
+  reconcileParentAdvertisingFromSkuRows
+} from "../src/server/pnl/parent-advertising-rollup.ts";
 import { buildPnlPeriodRanges } from "../src/server/pnl/periods.ts";
 
 const referenceDate = new Date("2026-07-09T12:00:00.000Z");
@@ -267,6 +270,52 @@ const tests = [
       assert.equal(rows.length, 1);
       assert.equal(rows[0].parentSku, "PARENT-1");
       assert.equal(rows[0].walmartConnectAdvertisingCost, 12);
+    }
+  },
+  {
+    name: "adds mapped catalog children to parent rollup details without changing totals",
+    run() {
+      const rows = appendMissingCatalogChildSkuRows(
+        [
+          buildProfitRow({
+            parentSku: "18918124753",
+            sellerSku: "KBBWC26325",
+            label: "walmart:KBBWC26325",
+            quantity: 2,
+            grossRevenue: 20,
+            netRevenue: 20,
+            netProfit: 10
+          })
+        ],
+        [
+          {
+            marketplace: "walmart",
+            parentSku: "18918124753",
+            sellerSku: "KBBWC26325"
+          },
+          {
+            marketplace: "walmart",
+            parentSku: "18918124753",
+            sellerSku: "CH4036-50CT"
+          },
+          {
+            marketplace: "walmart",
+            parentSku: "18918124753",
+            sellerSku: "18918124753"
+          }
+        ],
+        "walmart"
+      );
+
+      assert.equal(rows.length, 3);
+      assert.deepEqual(
+        rows.map((row) => row.sellerSku),
+        ["KBBWC26325", "CH4036-50CT", "18918124753"]
+      );
+      assert.equal(rows[1].parentSku, "18918124753");
+      assert.equal(rows[1].grossRevenue, 0);
+      assert.equal(rows[2].parentSku, "18918124753");
+      assert.equal(rows[2].grossRevenue, 0);
     }
   },
   {

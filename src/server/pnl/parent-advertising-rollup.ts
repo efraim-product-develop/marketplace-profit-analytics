@@ -1,5 +1,45 @@
 import type { ProfitRow } from "./types";
 
+export type ParentCatalogChildSku = {
+  marketplace?: string | null;
+  parentSku: string | null;
+  sellerSku: string | null;
+};
+
+export function appendMissingCatalogChildSkuRows(
+  skuRows: ProfitRow[],
+  catalogChildren: ParentCatalogChildSku[],
+  defaultMarketplace: string
+) {
+  const rows = [...skuRows];
+  const existingSkuKeys = new Set(
+    rows
+      .filter((row) => row.sellerSku)
+      .map((row) => getSkuKey(row.marketplace, row.sellerSku!))
+  );
+
+  for (const child of catalogChildren) {
+    const sellerSku = child.sellerSku?.trim();
+    const parentSku = child.parentSku?.trim();
+    const marketplace = child.marketplace?.trim() || defaultMarketplace;
+
+    if (!sellerSku || !parentSku || !marketplace) {
+      continue;
+    }
+
+    const key = getSkuKey(marketplace, sellerSku);
+
+    if (existingSkuKeys.has(key)) {
+      continue;
+    }
+
+    rows.push(createEmptyCatalogChildSkuRow({ marketplace, parentSku, sellerSku }));
+    existingSkuKeys.add(key);
+  }
+
+  return rows;
+}
+
 export function reconcileParentAdvertisingFromSkuRows(
   parentRows: ProfitRow[],
   skuRows: ProfitRow[]
@@ -85,6 +125,54 @@ function getParentRowKey(marketplace: string, parentSku?: string | null) {
 
 function getSkuKey(marketplace: string, sellerSku: string) {
   return `${marketplace}:${sellerSku}`;
+}
+
+function createEmptyCatalogChildSkuRow({
+  marketplace,
+  parentSku,
+  sellerSku
+}: {
+  marketplace: string;
+  parentSku: string;
+  sellerSku: string;
+}): ProfitRow {
+  return {
+    marketplace,
+    parentSku,
+    sellerSku,
+    label: getSkuKey(marketplace, sellerSku),
+    salesSource: "none",
+    quantity: 0,
+    grossRevenue: 0,
+    discounts: 0,
+    netRevenue: 0,
+    refunds: 0,
+    salesRefunds: 0,
+    taxCollected: 0,
+    marketplaceFees: 0,
+    commissionFees: 0,
+    fulfillmentFees: 0,
+    shippingFees: 0,
+    storageFees: 0,
+    returnFees: 0,
+    adjustmentFees: 0,
+    otherFees: 0,
+    otherFeeCategoryBreakdown: [],
+    semAdvertisingCost: 0,
+    walmartConnectAdvertisingCost: 0,
+    advertisingCost: 0,
+    cogs: 0,
+    grossProfit: 0,
+    grossMarginPercent: 0,
+    grossProfitPerUnit: 0,
+    missingCogsUnits: 0,
+    missingCogsLineCount: 0,
+    contributionProfit: 0,
+    netProfit: 0,
+    marginPercent: 0,
+    netMarginPercent: 0,
+    profitPerUnit: 0
+  };
 }
 
 function roundMoney(value: number) {

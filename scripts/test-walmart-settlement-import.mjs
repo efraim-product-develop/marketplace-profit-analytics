@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { walmartSettlementImportParsers } from "../src/server/connectors/walmart/settlements.ts";
+import {
+  resolveSettlementFeeOrderLineMatches,
+  walmartSettlementImportParsers
+} from "../src/server/connectors/walmart/settlements.ts";
 
 const parser = walmartSettlementImportParsers[0];
 const headers = [
@@ -222,17 +225,18 @@ const categories = parsed.summary.otherWalmartFeesCategoryBreakdown;
 assert.equal(parsed.reportType, "walmart_payments_new");
 assert.equal(parsed.allowDuplicateFileImport, true);
 assert.equal(parsed.rowCount, 21);
-assert.equal(parsed.validCount, 16);
+assert.equal(parsed.validCount, 17);
 assert.equal(parsed.rejectedCount, 0);
 assert.equal(parsed.summary.feeRows, 15);
-assert.equal(parsed.summary.advertisingRows, 0);
+assert.equal(parsed.summary.advertisingRows, 1);
 assert.equal(parsed.summary.refundRows, 1);
+assert.equal(parsed.summary.semAdvertisingTotal, 791.4);
 assert.equal(parsed.summary.commissionFeeTotal, 2.15);
 assert.equal(parsed.summary.fulfillmentFeeTotal, 7.35);
 assert.equal(parsed.summary.returnFeeTotal, 1.25);
 assert.equal(parsed.summary.refundSalesTotal, 22.47);
-assert.equal(parsed.summary.semRowsExcluded, 1);
-assert.equal(parsed.summary.semAdvertisingExcludedTotal, 791.4);
+assert.equal(parsed.summary.semRowsExcluded, 0);
+assert.equal(parsed.summary.semAdvertisingExcludedTotal, 0);
 assert.equal(parsed.summary.settlementSaleRowsSkipped, 1);
 assert.equal(parsed.summary.taxRowsSkipped, 1);
 assert.equal(parsed.summary.unsupportedFinancialRows, 1);
@@ -262,17 +266,26 @@ assert.equal(parsed.summary.settlementPayoutDateSource, "Payment Date");
 assert.match(parsed.summary.settlementPayoutReference, /^walmart_payments_new::2026-01-01::2026-01-14::usd::91108.89$/);
 assert.equal(parsed.summary.inheritedPaymentSummaryPeriodRows, 12);
 assert.equal(parsed.summary.missingPeriodRows, 0);
-assert.equal(parsed.previewRows[0].normalizedData?.feeType, "fulfillment_fee");
-assert.equal(parsed.previewRows[0].normalizedData?.periodStartDate, "2026-01-01");
-assert.equal(parsed.previewRows[0].normalizedData?.periodEndDate, "2026-01-14");
-assert.equal(parsed.previewRows[0].normalizedData?.periodDateSource, "payment_summary");
-assert.equal(parsed.previewRows[1].normalizedData?.feeType, "commission");
-assert.equal(parsed.previewRows[1].normalizedData?.periodDateSource, "payment_summary");
-assert.equal(parsed.previewRows[2].normalizedData?.target, "refund");
-assert.equal(parsed.previewRows[3].normalizedData?.adjustmentCategory, "refunded_shipping");
-assert.equal(parsed.previewRows[3].normalizedData?.attributionScope, "marketplace");
-assert.equal(parsed.previewRows[4].normalizedData?.feeType, "return_fee");
-assert.equal(parsed.previewRows[5].normalizedData?.adjustmentCategory, "wfs_refund");
+const fulfillmentPreview = parsed.previewRows.find((row) => row.normalizedData?.feeType === "fulfillment_fee");
+const semPreview = parsed.previewRows.find((row) => row.normalizedData?.feeType === "seller_center_sem");
+const commissionPreview = parsed.previewRows.find((row) => row.normalizedData?.feeType === "commission");
+const refundPreview = parsed.previewRows.find((row) => row.normalizedData?.target === "refund");
+const refundedShippingPreview = parsed.previewRows.find(
+  (row) => row.normalizedData?.adjustmentCategory === "refunded_shipping"
+);
+const returnFeePreview = parsed.previewRows.find((row) => row.normalizedData?.feeType === "return_fee");
+const wfsRefundPreview = parsed.previewRows.find((row) => row.normalizedData?.adjustmentCategory === "wfs_refund");
+
+assert.equal(fulfillmentPreview?.normalizedData?.periodStartDate, "2026-01-01");
+assert.equal(fulfillmentPreview?.normalizedData?.periodEndDate, "2026-01-14");
+assert.equal(fulfillmentPreview?.normalizedData?.periodDateSource, "payment_summary");
+assert.equal(semPreview?.normalizedData?.target, "advertising");
+assert.equal(semPreview?.normalizedData?.pnlReportingDate, "2026-01-04");
+assert.equal(commissionPreview?.normalizedData?.periodDateSource, "payment_summary");
+assert.equal(refundPreview?.normalizedData?.target, "refund");
+assert.equal(refundedShippingPreview?.normalizedData?.attributionScope, "marketplace");
+assert.equal(returnFeePreview?.normalizedData?.feeType, "return_fee");
+assert.equal(wfsRefundPreview?.normalizedData?.adjustmentCategory, "wfs_refund");
 
 const sameReport = parser.parse({ ...context, buffer: Buffer.from(csv) });
 assert.equal(sameReport.summary.settlementPayoutReference, parsed.summary.settlementPayoutReference);
@@ -339,6 +352,120 @@ const negativePayoutCsv = [headers, settlementRow({
   .join("\n");
 const negativePayout = parser.parse({ ...context, buffer: Buffer.from(negativePayoutCsv) });
 assert.equal(negativePayout.summary.settlementPayoutAmount, -10.5);
+
+const unmatchedFeeDateCsv = [
+  headers,
+  settlementRow({
+    periodStartDate: "01/01/2026",
+    periodEndDate: "01/14/2026",
+    postedAt: "01/15/2026",
+    transactionType: "PaymentSummary",
+    description: "Deposited in PAYONEER account"
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Service Fee",
+    description: "WFS Storage Fee",
+    amount: "-9.00",
+    amountType: "Fee/Reimbursement",
+    purchaseOrder: "",
+    purchaseOrderLine: "",
+    customerOrder: "",
+    customerOrderLine: "",
+    sku: ""
+  }),
+  settlementRow({
+    postedAt: "01/16/2026",
+    transactionType: "Sale",
+    description: "Commission",
+    amount: "-2.15",
+    amountType: "Commission on Product"
+  })
+]
+  .map((row) => row.map(csvCell).join(","))
+  .join("\n");
+const unmatchedFeeDateReport = parser.parse({
+  ...context,
+  buffer: Buffer.from(unmatchedFeeDateCsv)
+});
+const unmatchedFeeRows = getPayloadRows(unmatchedFeeDateReport);
+const storageFee = unmatchedFeeRows.find((row) => row.adjustmentCategory === "wfs_storage_fee");
+const matchedCommission = unmatchedFeeRows.find((row) => row.feeType === "commission");
+assert.equal(storageFee.reportingDate.slice(0, 10), "2026-01-16");
+assert.equal(storageFee.reportingDateSource, "transaction_posted_timestamp");
+assert.equal(storageFee.postedAt.slice(0, 10), "2026-01-16");
+assert.equal(matchedCommission.reportingDate.slice(0, 10), "2026-01-16");
+assert.equal(matchedCommission.reportingDateSource, "transaction_posted_timestamp");
+
+const feeLinkingCsv = [
+  headers,
+  settlementRow({
+    periodStartDate: "01/01/2026",
+    periodEndDate: "01/14/2026",
+    postedAt: "01/15/2026",
+    transactionType: "PaymentSummary",
+    description: "Deposited in PAYONEER account"
+  }),
+  settlementRow({
+    transactionKey: "matched-commission",
+    postedAt: "01/10/2026",
+    transactionType: "Sale",
+    description: "Commission",
+    amount: "-2.15",
+    amountType: "Commission on Product",
+    purchaseOrder: "PO-123",
+    purchaseOrderLine: "1",
+    sku: ""
+  }),
+  settlementRow({
+    transactionKey: "unmatched-fulfillment",
+    postedAt: "01/11/2026",
+    transactionType: "Adjustment",
+    description: "WFS Fulfillment fee",
+    amount: "-7.35",
+    amountType: "Fee/Reimbursement",
+    purchaseOrder: "PO-999",
+    purchaseOrderLine: "9",
+    sku: "SETTLEMENT-SKU"
+  })
+]
+  .map((row) => row.map(csvCell).join(","))
+  .join("\n");
+const feeLinkingReport = parser.parse({
+  ...context,
+  buffer: Buffer.from(feeLinkingCsv)
+});
+const feeLinkRows = getPayloadRows(feeLinkingReport).filter(
+  (row) => row.target === "marketplace_fee"
+);
+const feeLinks = resolveSettlementFeeOrderLineMatches(feeLinkRows, [
+  {
+    id: "order-item-1",
+    orderId: "order-1",
+    sellerSku: "PO-SKU",
+    purchaseOrderNumber: "PO-123",
+    purchaseOrderLineNumber: "1"
+  }
+]);
+const matchedFeeLink = feeLinks.get(
+  feeLinkRows.find((row) => row.transactionKey === "matched-commission").duplicateKey
+);
+const unmatchedFeeLink = feeLinks.get(
+  feeLinkRows.find((row) => row.transactionKey === "unmatched-fulfillment").duplicateKey
+);
+assert.equal(matchedFeeLink.matchStatus, "matched");
+assert.equal(matchedFeeLink.orderId, "order-1");
+assert.equal(matchedFeeLink.orderItemId, "order-item-1");
+assert.equal(matchedFeeLink.sellerSku, "PO-SKU");
+assert.equal(matchedFeeLink.reportingDate.slice(0, 10), "2026-01-10");
+assert.equal(matchedFeeLink.productAttributionReliable, true);
+assert.equal(unmatchedFeeLink.matchStatus, "not_found");
+assert.equal(unmatchedFeeLink.orderId, null);
+assert.equal(unmatchedFeeLink.orderItemId, null);
+assert.equal(unmatchedFeeLink.sellerSku, null);
+assert.equal(unmatchedFeeLink.reportingDate.slice(0, 10), "2026-01-11");
+assert.equal(unmatchedFeeLink.reportingDateSource, "transaction_posted_timestamp");
+assert.equal(unmatchedFeeLink.productAttributionReliable, false);
 
 console.log("ok - parses Walmart Payments New settlement financial categories safely");
 

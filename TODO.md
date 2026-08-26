@@ -55,13 +55,15 @@ This backlog is the working source of truth for project priorities. Read it befo
 - Updated `/ad-spend/upload` to use the Walmart Connect report Date column and skip rows outside the selected period so ad spend can support day/week/custom/yesterday P&L.
 - Updated Walmart Connect ad import so Sponsored Video and Sponsored Brands rows with blank SKU ID import as unassigned ad spend instead of being skipped.
 - Added Walmart Payments New settlement parser and committer for `/imports/settlements`, including product-price refunds, marketplace commission, WFS fulfillment fees, return/storage/adjustment/other settlement fees, and payout summary context.
-- Rebuilt Walmart settlement imports as a financial source only: PO remains sales, settlement sale rows are skipped, tax is ignored, and settlement SEM is excluded from active P&L.
-- Added Walmart Seller Center SEM campaign-level daily import through `/imports/advertising` with preview, validation, import history, row-level updates, and P&L-ready `walmart_seller_center_sem` advertising rows.
+- Rebuilt Walmart settlement imports as a financial source only: PO remains sales, settlement sale rows are skipped, tax is ignored, and settlement SEM is imported as active Seller Center SEM advertising.
+- Retired the standalone Walmart Seller Center SEM campaign-level import from the active Walmart import workflow; Seller Center SEM now comes from Walmart Payments New settlement rows.
 - Updated Walmart Payments New settlement parsing so product-price refund rows save as audit `Refund` rows instead of being treated as other settlement fees.
 - Fixed refund handling so settlement refund rows can reduce PO-based sales without appearing inside Other Walmart Fees & Adjustments.
 - Classified known Walmart settlement adjustment rows into marketplace-level Other Walmart Fees & Adjustments with charge/credit direction, category metadata, unsupported-row reporting, and expandable Parent P&L breakdown.
 - Added settlement payout tracking from Walmart `PaymentSummary.Total Payable` as a separate cash-flow metric stored in `SettlementPayout`, with payout history on Parent P&L and no effect on Profit.
 - Updated Walmart Payments New settlement parsing to preserve payout-period dates for audit while using `Transaction Posted Timestamp` as the reporting date for newly imported financial rows.
+- Updated Walmart Payments New settlement parsing so unmatched standalone fee rows use `Transaction Posted Timestamp` as their one P&L reporting day.
+- Linked Walmart settlement commission and WFS fulfillment fee rows directly to PO order lines when `Purchase Order # + Purchase Order line #` matches exactly one imported PO line; unmatched rows remain marketplace-level on their transaction posted date.
 - Updated settlement fee math so signed settlement rows treat negative amounts as expenses and positive amounts as credits/reimbursements.
 - Preserved legacy settlement-period allocation support for older imported rows, while new settlement imports use posted-date reporting when Transaction Posted Timestamp exists.
 - Added settlement allocation UI notices when P&L uses period allocation or posting-date fallback.
@@ -97,9 +99,9 @@ This backlog is the working source of truth for project priorities. Read it befo
 - Verified global marketplace selector refactor on July 8, 2026: `pnpm run typecheck` and `pnpm run lint`.
 - Split Walmart advertising display into Walmart Connect Advertising, SEM Advertising, and Total Advertising.
 - Ignored legacy monthly/cumulative Walmart Connect rows across all P&L paths so only daily advertising rows affect ad spend.
-- Rebuilt overall Walmart Marketplace P&L metric sourcing so Sales uses PO order dates, refunds/fees use settlement posted timestamps, COGS uses EffectiveCogsService, Seller Center SEM uses daily campaign report dates, Walmart Connect uses daily ad dates, and Settlement Payout stays separate from Profit.
+- Rebuilt overall Walmart Marketplace P&L metric sourcing so Sales uses PO order dates, refunds/fees/Seller Center SEM use settlement posted timestamps, COGS uses EffectiveCogsService, Walmart Connect uses daily ad dates, and Settlement Payout stays separate from Profit.
 - Updated Walmart P&L terminology so Gross Sales is valid PO sales before settlement refunds, Refunds are product-price settlement refunds, and Sales equals Gross Sales minus Refunds. Profit now starts from Sales without subtracting Refunds a second time.
-- Kept campaign-level Seller Center SEM in the overall marketplace summary while excluding it from Parent/SKU product allocation rows.
+- Kept settlement-derived Seller Center SEM in the overall marketplace summary while excluding it from Parent/SKU product allocation rows.
 - Finalized Parent/SKU product-level P&L attribution rules: only attributable settlement refunds, attributable commission, attributable fulfillment fees, historical COGS, and SKU-attributed Walmart Connect rows affect product Profit.
 - Kept Seller Center SEM, unallocated refunds, unallocated commission, unallocated fulfillment fees, unallocated Walmart Connect rows, Other Walmart Fees & Adjustments, and Settlement Payout out of Parent/SKU product Profit.
 - Added Parent/SKU attribution diagnostics showing attributable versus unallocated product financial rows.
@@ -124,7 +126,7 @@ This backlog is the working source of truth for project priorities. Read it befo
 - Apply the PO import optimization migration before re-uploading large historical PO reports.
 - Apply the PO quantity audit migration before using the newest PO importer against Supabase.
 - Re-import current Walmart PO reports after the PO sales migration is applied.
-- Re-run a live database sanity check for a period containing PO sales, settlements, and SEM after the local Supabase TLS connection issue is cleared.
+- Re-run a live database sanity check for a period containing PO sales and settlements after the local Supabase TLS connection issue is cleared.
 - Validate one real Walmart settlement period end-to-end as separate refunds, commission, fulfillment fees, other fees, and payout data.
 - Decide whether to retire legacy `/advertising/upload` or keep it as a date-based fallback.
 - Re-import any missing Walmart Connect daily Item Performance reports for dates where ad spend should appear in day/week/custom P&L.
@@ -141,7 +143,7 @@ This backlog is the working source of truth for project priorities. Read it befo
 - Restart the dev server after Prisma generation.
 - Upload fresh Walmart PO reports through `/imports/sales` and confirm Parent P&L updates from PO report rows.
 - Upload Walmart Item Sales through `/imports/inventory` when SKU-to-parent grouping needs to be established or refreshed.
-- Upload Walmart Payments New settlement reports and confirm refunds, commission, fulfillment fees, and other fees affect P&L without changing PO sales rows.
+- Upload Walmart Payments New settlement reports and confirm refunds, commission, fulfillment fees, Seller Center SEM, and other fees affect P&L without changing PO sales rows.
 - Open `/imports/audit` for the same date range and resolve any Missing, Partial, or Coverage Unknown source status.
 - Verify duplicate file blocking works.
 - Add import framework tests for detection, preview storage, duplicate detection, and commit dispatch.
@@ -149,7 +151,7 @@ This backlog is the working source of truth for project priorities. Read it befo
 
 ## Future
 
-- Add more advertising parser coverage as new Walmart or marketplace ad report formats are collected.
+- Add more non-SEM advertising parser coverage as new Walmart or marketplace ad report formats are collected.
 - Implement Walmart Connect parser in `/imports/advertising` if direct `/ad-spend/upload` is retired.
 - Verify Walmart Payments New settlement imports end-to-end with January payout-cycle files.
 - Validate Walmart Payments New settlement fees against January Marketplace P&L after confirming imported rows use posted timestamps and supported categories.

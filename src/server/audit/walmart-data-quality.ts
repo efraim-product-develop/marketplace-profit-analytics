@@ -340,7 +340,7 @@ export async function getWalmartDataQualityAudit({
   const settlementRefunds = refunds.filter(isSettlementRefund);
   const feeInputs = settlementFees.map((fee) => mapFeeInput(fee, parentSkuBySellerSku));
   const refundInputs = settlementRefunds.map((refund) => mapRefundInput(refund, parentSkuBySellerSku));
-  const adInputs = advertisingCosts.filter(isActiveAdvertisingCost).map(mapAdvertisingInput);
+  const adInputs = advertisingCosts.map(mapAdvertisingInput);
   const productFees = filterProductAttributableFees(feeInputs);
   const productRefunds = filterProductAttributableRefunds(refundInputs);
   const productAds = filterProductAttributedAdvertisingCosts(adInputs);
@@ -1112,19 +1112,6 @@ function isActiveSettlementFee(fee: SettlementFeeRow) {
   }
 
   return readMetadataText(metadata, "target") !== "ignored";
-}
-
-function isActiveAdvertisingCost(cost: AdvertisingCostRow) {
-  const metadata = toRecord(cost.metadata);
-
-  if (
-    cost.source === "walmart_seller_center_sem" &&
-    readMetadataText(metadata, "source") === WALMART_SETTLEMENT_REPORT_TYPE
-  ) {
-    return false;
-  }
-
-  return true;
 }
 
 function getFulfillmentBucket(item: AuditOrderItem): "wfs" | "sellerFulfilled" | "unknown" {

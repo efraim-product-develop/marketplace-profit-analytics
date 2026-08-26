@@ -21,7 +21,12 @@ const PAYMENTS_NEW_HEADERS = [
 ];
 const PREVIEW_LIMIT = 50;
 const CREATE_CHUNK_SIZE = 500;
-const DUPLICATE_VERSION = "walmart-payments-new-v9-posted-financial-source";
+const DUPLICATE_VERSION = "walmart-payments-new-v12-settlement-sem-posted-date";
+const TRANSACTION_POSTED_REPORTING_DATE_SOURCE = "transaction_posted_timestamp";
+const UNMATCHED_FEE_PERIOD_END_REPORTING_DATE_SOURCE =
+  "settlement_period_end_unmatched_fee";
+const UNMATCHED_FEE_POSTING_DATE_FALLBACK_SOURCE =
+  "transaction_posted_timestamp_missing_period_end";
 
 type SettlementReportPeriod = {
   periodStartDate: string | null;
@@ -53,6 +58,35 @@ type SettlementPayoutPayload = {
 type SettlementClassificationStatus = "classified" | "ignored" | "unsupported";
 type SettlementFinancialDirection = "charge" | "credit" | "neutral";
 type SettlementAttributionScope = "marketplace" | "product";
+type SettlementFeePoLineMatchStatus =
+  | "not_applicable"
+  | "missing_reference"
+  | "not_found"
+  | "ambiguous"
+  | "matched";
+type SettlementReportingDateSource =
+  | typeof TRANSACTION_POSTED_REPORTING_DATE_SOURCE
+  | typeof UNMATCHED_FEE_PERIOD_END_REPORTING_DATE_SOURCE
+  | typeof UNMATCHED_FEE_POSTING_DATE_FALLBACK_SOURCE;
+
+export type SettlementFeePoLineLookupRow = {
+  id: string;
+  orderId: string;
+  sellerSku: string;
+  purchaseOrderNumber: string | null;
+  purchaseOrderLineNumber: string | null;
+};
+
+type SettlementFeeCommitResolution = {
+  orderId: string | null;
+  orderItemId: string | null;
+  sellerSku: string | null;
+  reportingDate: string;
+  reportingDateSource: SettlementReportingDateSource;
+  matchStatus: SettlementFeePoLineMatchStatus;
+  attributionScope: SettlementAttributionScope;
+  productAttributionReliable: boolean;
+};
 type SettlementClassification = Pick<
   WalmartPaymentSettlementRow,
   | "target"
@@ -71,6 +105,8 @@ export type WalmartPaymentSettlementRow = {
   periodStartDate: string | null;
   periodEndDate: string | null;
   periodDateSource: "row" | "payment_summary" | "missing";
+  reportingDate: string;
+  reportingDateSource: SettlementReportingDateSource;
   transactionKey: string | null;
   transactionType: string;
   transactionDescription: string;
@@ -86,7 +122,7 @@ export type WalmartPaymentSettlementRow = {
   shipQuantity: number | null;
   currency: string;
   feeType: string | null;
-  target: "marketplace_fee" | "refund" | "skip";
+  target: "marketplace_fee" | "refund" | "advertising" | "skip";
   skipReason: string | null;
   classificationStatus: SettlementClassificationStatus;
   financialDirection: SettlementFinancialDirection;
@@ -106,6 +142,7 @@ type SettlementParseSummary = {
   feeRows: number;
   advertisingRows: number;
   refundRows: number;
+  semAdvertisingTotal: number;
   commissionFeeTotal: number;
   fulfillmentFeeTotal: number;
   returnFeeTotal: number;
@@ -302,9 +339,13 @@ async function commitWalmartPaymentsNewReport(
   }
 
   const feeRows = rows.filter((row) => row.target === "marketplace_fee" && row.feeType);
+  const advertisingRows = rows.filter((row) => row.target === "advertising");
   const refundRows = rows.filter((row) => row.target === "refund");
   const replacedRows = await deleteExistingSettlementRows(context, replacementKeys);
+  const feeCommitResolutions = await getSettlementFeeCommitResolutions(context, feeRows);
+  const feePoLineMatchSummary = summarizeFeePoLineMatches(feeCommitResolutions);
   let feeRowsCreated = 0;
+  let advertisingRowsCreated = 0;
   let refundRowsCreated = 0;
   const payoutRowsUpserted = settlementPayout
     ? await upsertSettlementPayout(context, settlementPayout)
@@ -312,20 +353,43 @@ async function commitWalmartPaymentsNewReport(
 
   for (const chunk of chunkArray(feeRows, CREATE_CHUNK_SIZE)) {
     const result = await prisma.marketplaceFee.createMany({
+      data: chunk.map((row) => {
+        const feeResolution = feeCommitResolutions.get(row.duplicateKey);
+
+        return {
+          organizationId: context.organizationId,
+          orderId: feeResolution?.orderId ?? null,
+          orderItemId: feeResolution?.orderItemId ?? null,
+          marketplace: context.marketplace,
+          sellerSku: feeResolution?.sellerSku ?? getPersistedFeeSellerSku(row),
+          feeType: row.feeType ?? "other_fee",
+          feeAmount: row.amount,
+          currency: row.currency,
+          postedAt: new Date(feeResolution?.reportingDate ?? row.reportingDate),
+          metadata: buildSettlementMetadata(row, context, feeResolution)
+        };
+      })
+    });
+    feeRowsCreated += result.count;
+  }
+
+  for (const chunk of chunkArray(advertisingRows, CREATE_CHUNK_SIZE)) {
+    const result = await prisma.advertisingCost.createMany({
       data: chunk.map((row) => ({
         organizationId: context.organizationId,
-        orderId: null,
-        orderItemId: null,
         marketplace: context.marketplace,
-        sellerSku: getPersistedFeeSellerSku(row),
-        feeType: row.feeType ?? "other_fee",
-        feeAmount: row.amount,
+        source: "walmart_seller_center_sem",
+        sellerSku: null,
+        parentSku: null,
+        campaignId: row.transactionKey,
+        campaignName: row.transactionDescription || "Seller Center SEM",
+        costDate: new Date(row.reportingDate),
+        amount: Math.abs(row.amount),
         currency: row.currency,
-        postedAt: new Date(row.postedAt),
         metadata: buildSettlementMetadata(row, context)
       }))
     });
-    feeRowsCreated += result.count;
+    advertisingRowsCreated += result.count;
   }
 
   for (const chunk of chunkArray(refundRows, CREATE_CHUNK_SIZE)) {
@@ -347,20 +411,25 @@ async function commitWalmartPaymentsNewReport(
     refundRowsCreated += result.count;
   }
 
-  const importedCount = feeRowsCreated + refundRowsCreated + payoutRowsUpserted;
+  const importedCount =
+    feeRowsCreated + advertisingRowsCreated + refundRowsCreated + payoutRowsUpserted;
 
   return {
     importedCount,
     summary: {
       importedRows: importedCount,
       feeRowsCreated,
+      feeRowsLinkedToPoLines: feePoLineMatchSummary.matched,
+      feeRowsMissingPoLineReference: feePoLineMatchSummary.missingReference,
+      feeRowsWithoutPoLineMatch: feePoLineMatchSummary.notFound,
+      feeRowsWithAmbiguousPoLineMatch: feePoLineMatchSummary.ambiguous,
       payoutRowsUpserted,
-      advertisingRowsCreated: 0,
+      advertisingRowsCreated,
       refundRowsCreated,
       replacedFeeRows: replacedRows.feeRowsDeleted,
       replacedAdvertisingRows: replacedRows.advertisingRowsDeleted,
       replacedRefundRows: replacedRows.refundRowsDeleted,
-      semSource: "excluded_from_settlement_import"
+      semSource: "walmart_payments_new"
     }
   };
 }
@@ -524,12 +593,20 @@ function parseSettlementRow(
     transactionReasonDescription,
     amount
   });
+  const reportingDate = resolveSettlementReportingDate({
+    target: classification.target,
+    postedAt,
+    externalOrderId,
+    externalLineId
+  });
   const row: WalmartPaymentSettlementRow = {
     rowNumber,
     postedAt,
     periodStartDate: inheritedPeriodStartDate,
     periodEndDate: inheritedPeriodEndDate,
     periodDateSource,
+    reportingDate: reportingDate.date,
+    reportingDateSource: reportingDate.source,
     transactionKey,
     transactionType,
     transactionDescription,
@@ -602,7 +679,14 @@ function classifySettlementRow({
   }
 
   if (normalizedAmountType.includes("sem_marketing_fee")) {
-    return ignored("settlement_sem_excluded", "seller_center_sem", "Seller Center SEM");
+    return classified({
+      target: "advertising",
+      feeType: "seller_center_sem",
+      category: "seller_center_sem",
+      categoryLabel: "Seller Center SEM",
+      attributionScope: "marketplace",
+      productAttributionReliable: false
+    });
   }
 
   if (normalizedAmountType.includes("commission_on_product")) {
@@ -833,6 +917,7 @@ function summarizeSettlementRows(
   }
 ): SettlementParseSummary {
   const feeRows = rows.filter((row) => row.target === "marketplace_fee");
+  const advertisingRows = rows.filter((row) => row.target === "advertising");
   const refundRows = rows.filter((row) => row.target === "refund");
   const otherWalmartFeeRows = feeRows.filter((row) => isOtherWalmartFee(row));
 
@@ -841,8 +926,11 @@ function summarizeSettlementRows(
     validRows: rows.length,
     skippedRows: skipped.skippedRows,
     feeRows: feeRows.length,
-    advertisingRows: 0,
+    advertisingRows: advertisingRows.length,
     refundRows: refundRows.length,
+    semAdvertisingTotal: roundMoney(
+      advertisingRows.reduce((sum, row) => sum + Math.abs(row.amount), 0)
+    ),
     commissionFeeTotal: positiveExpenseTotal(feeRows, "commission"),
     fulfillmentFeeTotal: positiveExpenseTotal(feeRows, "fulfillment_fee"),
     returnFeeTotal: positiveExpenseTotal(feeRows, "return_fee"),
@@ -884,6 +972,8 @@ function summarizeSettlementRows(
 function previewSettlementRow(row: WalmartPaymentSettlementRow) {
   return {
     postedAt: row.postedAt.slice(0, 10),
+    pnlReportingDate: row.reportingDate.slice(0, 10),
+    reportingDateSource: row.reportingDateSource,
     periodStartDate: row.periodStartDate?.slice(0, 10) ?? null,
     periodEndDate: row.periodEndDate?.slice(0, 10) ?? null,
     periodDateSource: row.periodDateSource,
@@ -918,6 +1008,8 @@ function decodeSettlementPayload(payload: Prisma.JsonValue) {
         periodStartDate: readNullableString(row.periodStartDate),
         periodEndDate: readNullableString(row.periodEndDate),
         periodDateSource: readPeriodDateSource(row.periodDateSource),
+        reportingDate: readStringValue(row.reportingDate) || readStringValue(row.postedAt),
+        reportingDateSource: readReportingDateSource(row.reportingDateSource),
         transactionKey: readNullableString(row.transactionKey),
         transactionType: readStringValue(row.transactionType),
         transactionDescription: readStringValue(row.transactionDescription),
@@ -987,14 +1079,22 @@ function decodeSettlementPayout(value: unknown): SettlementPayoutPayload | null 
 
 function buildSettlementMetadata(
   row: WalmartPaymentSettlementRow,
-  context: ImportCommitContext
+  context: ImportCommitContext,
+  feeResolution?: SettlementFeeCommitResolution
 ): Prisma.InputJsonValue {
+  const reportingDate = feeResolution?.reportingDate ?? row.reportingDate;
+  const reportingDateSource = feeResolution?.reportingDateSource ?? row.reportingDateSource;
+  const attributionScope = feeResolution?.attributionScope ?? row.attributionScope;
+  const productAttributionReliable =
+    feeResolution?.productAttributionReliable ?? row.productAttributionReliable;
+
   return toJsonValue({
     source: "walmart_payments_new",
     importRunId: context.importRunId,
     originalFileName: context.originalFileName,
     sourceRow: row.rowNumber,
-    reportingDateSource: "transaction_posted_timestamp",
+    reportingDateSource,
+    pnlReportingDate: reportingDate,
     transactionPostedTimestamp: row.postedAt,
     auditSettlementPeriodStartDate: row.periodStartDate,
     auditSettlementPeriodEndDate: row.periodEndDate,
@@ -1024,8 +1124,11 @@ function buildSettlementMetadata(
     financialDirection: row.financialDirection,
     adjustmentCategory: row.adjustmentCategory,
     adjustmentCategoryLabel: row.adjustmentCategoryLabel,
-    attributionScope: row.attributionScope,
-    productAttributionReliable: row.productAttributionReliable,
+    attributionScope,
+    productAttributionReliable,
+    poLineMatchStatus: feeResolution?.matchStatus,
+    matchedOrderId: feeResolution?.orderId,
+    matchedOrderItemId: feeResolution?.orderItemId,
     duplicateKey: row.duplicateKey
   });
 }
@@ -1049,12 +1152,223 @@ function buildSettlementPayoutMetadata(
   });
 }
 
+async function getSettlementFeeCommitResolutions(
+  context: ImportCommitContext,
+  feeRows: WalmartPaymentSettlementRow[]
+) {
+  const linkableRows = feeRows.filter(shouldLinkSettlementFeeToPoLine);
+  const purchaseOrderNumbers = uniqueStrings(
+    linkableRows.map((row) => row.externalOrderId).filter(Boolean)
+  );
+  const orderItems: SettlementFeePoLineLookupRow[] = [];
+
+  for (const purchaseOrderChunk of chunkArray(purchaseOrderNumbers, CREATE_CHUNK_SIZE)) {
+    orderItems.push(
+      ...(await prisma.salesOrderItem.findMany({
+        where: {
+          organizationId: context.organizationId,
+          marketplace: context.marketplace,
+          purchaseOrderNumber: { in: purchaseOrderChunk }
+        },
+        select: {
+          id: true,
+          orderId: true,
+          sellerSku: true,
+          purchaseOrderNumber: true,
+          purchaseOrderLineNumber: true
+        }
+      }))
+    );
+  }
+
+  return resolveSettlementFeeOrderLineMatches(feeRows, orderItems);
+}
+
+export function resolveSettlementFeeOrderLineMatches(
+  feeRows: WalmartPaymentSettlementRow[],
+  orderItems: SettlementFeePoLineLookupRow[]
+) {
+  const orderItemsByPoLine = new Map<string, SettlementFeePoLineLookupRow[]>();
+
+  for (const orderItem of orderItems) {
+    const poLineKey = buildPoLineMatchKey(
+      orderItem.purchaseOrderNumber,
+      orderItem.purchaseOrderLineNumber
+    );
+
+    if (!poLineKey) {
+      continue;
+    }
+
+    const existing = orderItemsByPoLine.get(poLineKey) ?? [];
+    existing.push(orderItem);
+    orderItemsByPoLine.set(poLineKey, existing);
+  }
+
+  return new Map(
+    feeRows.map((row) => [
+      row.duplicateKey,
+      resolveSettlementFeeCommitResolution(row, orderItemsByPoLine)
+    ])
+  );
+}
+
+function summarizeFeePoLineMatches(
+  resolutions: Map<string, SettlementFeeCommitResolution>
+) {
+  const summary = {
+    matched: 0,
+    missingReference: 0,
+    notFound: 0,
+    ambiguous: 0,
+    notApplicable: 0
+  };
+
+  for (const resolution of resolutions.values()) {
+    if (resolution.matchStatus === "matched") {
+      summary.matched += 1;
+    } else if (resolution.matchStatus === "missing_reference") {
+      summary.missingReference += 1;
+    } else if (resolution.matchStatus === "not_found") {
+      summary.notFound += 1;
+    } else if (resolution.matchStatus === "ambiguous") {
+      summary.ambiguous += 1;
+    } else {
+      summary.notApplicable += 1;
+    }
+  }
+
+  return summary;
+}
+
+function resolveSettlementFeeCommitResolution(
+  row: WalmartPaymentSettlementRow,
+  orderItemsByPoLine: Map<string, SettlementFeePoLineLookupRow[]>
+): SettlementFeeCommitResolution {
+  if (!shouldLinkSettlementFeeToPoLine(row)) {
+    return {
+      orderId: null,
+      orderItemId: null,
+      sellerSku: getPersistedFeeSellerSku(row),
+      ...resolveUnmatchedFeeReportingDate(row),
+      matchStatus: "not_applicable",
+      attributionScope: row.attributionScope,
+      productAttributionReliable: row.productAttributionReliable
+    };
+  }
+
+  const poLineKey = buildPoLineMatchKey(row.externalOrderId, row.externalLineId);
+
+  if (!poLineKey) {
+    return buildUnmatchedLinkableFeeResolution(row, "missing_reference");
+  }
+
+  const matches = orderItemsByPoLine.get(poLineKey) ?? [];
+
+  if (matches.length !== 1) {
+    return buildUnmatchedLinkableFeeResolution(
+      row,
+      matches.length > 1 ? "ambiguous" : "not_found"
+    );
+  }
+
+  const [match] = matches;
+
+  return {
+    orderId: match.orderId,
+    orderItemId: match.id,
+    sellerSku: row.sellerSku ?? match.sellerSku,
+    reportingDate: row.postedAt,
+    reportingDateSource: TRANSACTION_POSTED_REPORTING_DATE_SOURCE,
+    matchStatus: "matched",
+    attributionScope: "product",
+    productAttributionReliable: true
+  };
+}
+
+function buildUnmatchedLinkableFeeResolution(
+  row: WalmartPaymentSettlementRow,
+  matchStatus: SettlementFeePoLineMatchStatus
+): SettlementFeeCommitResolution {
+  return {
+    orderId: null,
+    orderItemId: null,
+    sellerSku: null,
+    ...resolveUnmatchedFeeReportingDate(row),
+    matchStatus,
+    attributionScope: "marketplace",
+    productAttributionReliable: false
+  };
+}
+
+function resolveUnmatchedFeeReportingDate(row: WalmartPaymentSettlementRow): Pick<
+  SettlementFeeCommitResolution,
+  "reportingDate" | "reportingDateSource"
+> {
+  return {
+    reportingDate: row.postedAt,
+    reportingDateSource: TRANSACTION_POSTED_REPORTING_DATE_SOURCE
+  };
+}
+
 function getPersistedFeeSellerSku(row: WalmartPaymentSettlementRow) {
   if (!row.productAttributionReliable || row.attributionScope !== "product") {
     return null;
   }
 
   return row.sellerSku;
+}
+
+function shouldLinkSettlementFeeToPoLine(row: WalmartPaymentSettlementRow) {
+  return row.feeType === "commission" || row.feeType === "fulfillment_fee";
+}
+
+function buildPoLineMatchKey(
+  purchaseOrderNumber: string | null | undefined,
+  purchaseOrderLineNumber: string | null | undefined
+) {
+  const orderNumber = purchaseOrderNumber?.trim().toLowerCase();
+  const lineNumber = purchaseOrderLineNumber?.trim().toLowerCase();
+
+  if (!orderNumber || !lineNumber) {
+    return null;
+  }
+
+  return `${orderNumber}::${lineNumber}`;
+}
+
+function resolveSettlementReportingDate({
+  target,
+  postedAt,
+  externalOrderId,
+  externalLineId
+}: {
+  target: WalmartPaymentSettlementRow["target"];
+  postedAt: string;
+  externalOrderId: string | null;
+  externalLineId: string | null;
+}): { date: string; source: SettlementReportingDateSource } {
+  if (
+    target !== "marketplace_fee" ||
+    hasSpecificOrderLineReference(externalOrderId, externalLineId)
+  ) {
+    return {
+      date: postedAt,
+      source: TRANSACTION_POSTED_REPORTING_DATE_SOURCE
+    };
+  }
+
+  return {
+    date: postedAt,
+    source: TRANSACTION_POSTED_REPORTING_DATE_SOURCE
+  };
+}
+
+function hasSpecificOrderLineReference(
+  externalOrderId: string | null,
+  externalLineId: string | null
+) {
+  return Boolean(externalOrderId?.trim() && externalLineId?.trim());
 }
 
 function getFinancialDirection(amount: number): SettlementFinancialDirection {
@@ -1407,7 +1721,8 @@ function readTarget(value: unknown): WalmartPaymentSettlementRow["target"] {
 
   if (
     text === "marketplace_fee" ||
-    text === "refund"
+    text === "refund" ||
+    text === "advertising"
   ) {
     return text;
   }
@@ -1423,6 +1738,18 @@ function readPeriodDateSource(value: unknown): WalmartPaymentSettlementRow["peri
   }
 
   return "missing";
+}
+
+function readReportingDateSource(value: unknown): SettlementReportingDateSource {
+  if (value === UNMATCHED_FEE_PERIOD_END_REPORTING_DATE_SOURCE) {
+    return UNMATCHED_FEE_PERIOD_END_REPORTING_DATE_SOURCE;
+  }
+
+  if (value === UNMATCHED_FEE_POSTING_DATE_FALLBACK_SOURCE) {
+    return UNMATCHED_FEE_POSTING_DATE_FALLBACK_SOURCE;
+  }
+
+  return TRANSACTION_POSTED_REPORTING_DATE_SOURCE;
 }
 
 function readClassificationStatus(value: unknown): SettlementClassificationStatus {

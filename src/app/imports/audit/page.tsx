@@ -129,8 +129,8 @@ export default async function WalmartImportAuditPage({
           title="Seller Center SEM"
           status={audit.sellerCenterSem.status}
           detail={audit.sellerCenterSem.statusReason}
-          href="/imports/advertising"
-          action="Upload SEM"
+          href="/imports/settlements"
+          action="Upload settlement"
         >
           <Metric label="Rows" value={formatNumber(audit.sellerCenterSem.rows)} />
           <Metric label="Spend" value={formatCurrency(audit.sellerCenterSem.spend)} />

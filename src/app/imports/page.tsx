@@ -49,12 +49,6 @@ const importOptions: Array<{
     icon: Megaphone
   },
   {
-    href: "/imports/advertising",
-    title: "Seller Center SEM",
-    description: "Import Walmart Seller Center campaign-level daily SEM reports.",
-    icon: Megaphone
-  },
-  {
     href: "/imports/inventory",
     title: "SKU / Parent Mapping",
     description: "Import Walmart Item Sales only to map SKUs to parent products.",

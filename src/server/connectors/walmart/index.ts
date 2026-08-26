@@ -5,7 +5,6 @@ import {
 import type { MarketplaceConnector } from "@/server/connectors/types";
 import { walmartItemSalesMappingParser } from "./item-sales-mapping";
 import { walmartPoReportParser } from "./po-reports";
-import { walmartSellerCenterSemParser } from "./sem-advertising";
 import { walmartSettlementImportParsers } from "./settlements";
 
 const WALMART_MARKETPLACE = "walmart";
@@ -36,7 +35,6 @@ export const walmartConnector: MarketplaceConnector = {
   importParsers: [
     walmartPoReportParser,
     walmartItemSalesMappingParser,
-    ...walmartSettlementImportParsers,
-    walmartSellerCenterSemParser
+    ...walmartSettlementImportParsers
   ]
 };

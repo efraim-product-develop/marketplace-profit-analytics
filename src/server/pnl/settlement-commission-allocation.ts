@@ -35,7 +35,7 @@ export function prepareSettlementDerivedCommissionForDateRange(
   fee: ProfitFeeInput,
   dateRange?: SettlementDateRange
 ): SettlementCommissionOverlapResult {
-  if (isTransactionPostedSettlementMetadata(fee.metadata)) {
+  if (isSingleDaySettlementMetadata(fee.metadata)) {
     const included = isDateInRange(fee.postedAt, dateRange);
     const diagnostic = buildTransactionPostedCommissionDiagnostic(
       fee.amount,
@@ -178,8 +178,13 @@ function isWalmartPaymentsNewMetadata(metadata: Record<string, unknown> | undefi
   return readMetadataText(metadata, "source") === WALMART_PAYMENTS_NEW_SOURCE;
 }
 
-function isTransactionPostedSettlementMetadata(metadata: Record<string, unknown> | undefined) {
-  return readMetadataText(metadata, "reportingDateSource") === "transaction_posted_timestamp";
+function isSingleDaySettlementMetadata(metadata: Record<string, unknown> | undefined) {
+  const reportingDateSource = readMetadataText(metadata, "reportingDateSource");
+  return (
+    reportingDateSource === "transaction_posted_timestamp" ||
+    reportingDateSource === "settlement_period_end_unmatched_fee" ||
+    reportingDateSource === "transaction_posted_timestamp_missing_period_end"
+  );
 }
 
 function isCommissionFeeType(feeType: string) {

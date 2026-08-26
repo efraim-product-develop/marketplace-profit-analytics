@@ -121,7 +121,7 @@ function buildImportPageTitle(marketplaceTitle: string, importKind: ImportKind) 
   }
 
   if (importKind === "advertising") {
-    return `Upload ${marketplaceTitle} Seller Center SEM Report`;
+    return `Upload ${marketplaceTitle} Advertising Report`;
   }
 
   if (importKind === "inventory") {

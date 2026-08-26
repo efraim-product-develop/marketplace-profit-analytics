@@ -3,7 +3,10 @@ import { prisma } from "@/lib/db";
 import { EffectiveCogsService } from "@/server/cogs/effective-cogs";
 import { resolveAdvertisingCostParentSku } from "@/server/pnl/advertising-parent-resolution";
 import { calculateProfitRows, summarizeProfit } from "@/server/pnl/engine";
-import { reconcileParentAdvertisingFromSkuRows } from "@/server/pnl/parent-advertising-rollup";
+import {
+  appendMissingCatalogChildSkuRows,
+  reconcileParentAdvertisingFromSkuRows
+} from "@/server/pnl/parent-advertising-rollup";
 import {
   buildProductAttributionDiagnostics,
   filterProductAttributableFees,
@@ -337,7 +340,21 @@ export async function getParentPnl({
         rollupLines,
         "sellerSku"
       );
-  const reconciledRows = reconcileParentAdvertisingFromSkuRows(rows, skuRows);
+  const displayRows = await appendSelectedParentRowIfMissing({
+    organizationId,
+    marketplace,
+    parentSku,
+    rows,
+    skuRows
+  });
+  const skuRowsWithCatalogChildren = await appendCatalogChildSkuRowsForParents({
+    organizationId,
+    marketplace,
+    parentRows: displayRows,
+    skuRows,
+    selectedParentSku: parentSku
+  });
+  const reconciledRows = reconcileParentAdvertisingFromSkuRows(displayRows, skuRowsWithCatalogChildren);
   const settlementAllocation = dailyRollupResult
     ? dailyRollupResult.settlementAllocation
     : summarizeSettlementAllocation([
@@ -369,7 +386,7 @@ export async function getParentPnl({
   );
   return {
     rows: reconciledRows,
-    skuRows,
+    skuRows: skuRowsWithCatalogChildren,
     periodTiles,
     monthlyComparisonRows: calculateParentMonthlyComparisonRows(
       lines,
@@ -670,6 +687,193 @@ async function getSettlementPayoutHistory(
     originalFileName: row.originalFileName,
     importedAt: row.importedAt
   })));
+}
+
+async function appendSelectedParentRowIfMissing({
+  marketplace,
+  parentSku,
+  rows,
+  skuRows
+}: {
+  organizationId: string;
+  marketplace?: string;
+  parentSku?: string;
+  rows: ProfitRow[];
+  skuRows: ProfitRow[];
+}) {
+  if (!parentSku) {
+    return rows;
+  }
+
+  const existingParentKey = `${marketplace || rows[0]?.marketplace || skuRows[0]?.marketplace || "walmart"}:${parentSku}`;
+
+  if (rows.some((row) => row.label === existingParentKey || row.parentSku === parentSku)) {
+    return rows;
+  }
+
+  return [
+    createEmptyDisplayProfitRow({
+      marketplace: marketplace || rows[0]?.marketplace || skuRows[0]?.marketplace || "walmart",
+      parentSku
+    }),
+    ...rows
+  ];
+}
+
+async function appendCatalogChildSkuRowsForParents({
+  organizationId,
+  marketplace,
+  parentRows,
+  skuRows,
+  selectedParentSku
+}: {
+  organizationId: string;
+  marketplace?: string;
+  parentRows: ProfitRow[];
+  skuRows: ProfitRow[];
+  selectedParentSku?: string;
+}) {
+  const parentSkus = uniqueStrings([
+    selectedParentSku,
+    ...parentRows.map((row) => row.parentSku)
+  ]);
+
+  if (!parentSkus.length) {
+    return skuRows;
+  }
+
+  const defaultMarketplace =
+    marketplace || firstText([...parentRows.map((row) => row.marketplace), ...skuRows.map((row) => row.marketplace)]) || "walmart";
+  const [products, listings, orderItems, costRecords, advertisingCosts] = await Promise.all([
+    prisma.product.findMany({
+      where: {
+        organizationId,
+        parentSku: { in: parentSkus },
+        internalSku: { not: null }
+      },
+      select: {
+        internalSku: true,
+        parentSku: true
+      }
+    }),
+    prisma.listing.findMany({
+      where: {
+        organizationId,
+        ...(marketplace ? { marketplace } : {}),
+        parentSku: { in: parentSkus }
+      },
+      select: {
+        marketplace: true,
+        parentSku: true,
+        sellerSku: true
+      }
+    }),
+    prisma.salesOrderItem.findMany({
+      where: {
+        organizationId,
+        ...(marketplace ? { marketplace } : {}),
+        parentSku: { in: parentSkus }
+      },
+      distinct: ["marketplace", "sellerSku", "parentSku"],
+      select: {
+        marketplace: true,
+        parentSku: true,
+        sellerSku: true
+      }
+    }),
+    prisma.costRecord.findMany({
+      where: {
+        organizationId,
+        ...(marketplace ? { marketplace } : {}),
+        parentSku: { in: parentSkus }
+      },
+      distinct: ["marketplace", "sellerSku", "parentSku"],
+      select: {
+        marketplace: true,
+        parentSku: true,
+        sellerSku: true
+      }
+    }),
+    prisma.advertisingCost.findMany({
+      where: {
+        organizationId,
+        ...(marketplace ? { marketplace } : {}),
+        source: { in: PNL_ADVERTISING_SOURCES },
+        parentSku: { in: parentSkus },
+        sellerSku: { not: null }
+      },
+      distinct: ["marketplace", "sellerSku", "parentSku"],
+      select: {
+        marketplace: true,
+        parentSku: true,
+        sellerSku: true
+      }
+    })
+  ]);
+
+  return appendMissingCatalogChildSkuRows(
+    skuRows,
+    [
+      ...products.map((product) => ({
+        marketplace: defaultMarketplace,
+        parentSku: product.parentSku,
+        sellerSku: product.internalSku
+      })),
+      ...listings,
+      ...orderItems,
+      ...costRecords,
+      ...advertisingCosts
+    ],
+    defaultMarketplace
+  );
+}
+
+function createEmptyDisplayProfitRow({
+  marketplace,
+  parentSku,
+  sellerSku
+}: {
+  marketplace: string;
+  parentSku?: string;
+  sellerSku?: string;
+}): ProfitRow {
+  return {
+    marketplace,
+    parentSku,
+    sellerSku,
+    label: `${marketplace}:${sellerSku ?? parentSku ?? "Unassigned parent"}`,
+    salesSource: "none",
+    quantity: 0,
+    grossRevenue: 0,
+    discounts: 0,
+    netRevenue: 0,
+    refunds: 0,
+    salesRefunds: 0,
+    taxCollected: 0,
+    marketplaceFees: 0,
+    commissionFees: 0,
+    fulfillmentFees: 0,
+    shippingFees: 0,
+    storageFees: 0,
+    returnFees: 0,
+    adjustmentFees: 0,
+    otherFees: 0,
+    otherFeeCategoryBreakdown: [],
+    semAdvertisingCost: 0,
+    walmartConnectAdvertisingCost: 0,
+    advertisingCost: 0,
+    cogs: 0,
+    grossProfit: 0,
+    grossMarginPercent: 0,
+    grossProfitPerUnit: 0,
+    missingCogsUnits: 0,
+    missingCogsLineCount: 0,
+    contributionProfit: 0,
+    netProfit: 0,
+    marginPercent: 0,
+    netMarginPercent: 0,
+    profitPerUnit: 0
+  };
 }
 
 function decorateProfitRows(
@@ -1314,7 +1518,7 @@ function prepareFeeForDateRange(
     return isDateInRange(fee.postedAt, dateRange) ? fee : null;
   }
 
-  if (isTransactionPostedSettlementMetadata(fee.metadata)) {
+  if (isSingleDaySettlementMetadata(fee.metadata)) {
     return isDateInRange(fee.postedAt, dateRange) ? fee : null;
   }
 
@@ -1360,29 +1564,7 @@ function prepareAdvertisingCostForDateRange(
     return cost;
   }
 
-  if (!isSettlementSemAdvertisingCost(cost)) {
-    return isDateInRange(cost.costDate, dateRange) ? cost : null;
-  }
-
-  const allocation = SETTLEMENT_ALLOCATOR.allocateForRange(
-    {
-      amount: cost.amount,
-      settlementPeriodStart: readMetadataText(cost.metadata, "periodStartDate"),
-      settlementPeriodEnd: readMetadataText(cost.metadata, "periodEndDate"),
-      postingDate: cost.costDate
-    },
-    dateRange
-  );
-
-  if (allocation.amount === 0) {
-    return null;
-  }
-
-  return {
-    ...cost,
-    amount: allocation.amount,
-    metadata: withSettlementAllocationMetadata(cost.metadata, allocation)
-  };
+  return isDateInRange(cost.costDate, dateRange) ? cost : null;
 }
 
 function filterRefundsByDateRange(
@@ -1858,16 +2040,15 @@ async function getAdvertisingCosts(
       ...buildParentSkuAdvertisingWhere(parentSku, sellerSkus)
     }
   });
-  const includedCosts = costs.filter(isIncludedAdvertisingCost);
   const parentSkuBySellerSku = new Map<string, string | null>();
 
   await addCatalogParentSkus(
     organizationId,
     parentSkuBySellerSku,
-    uniqueStrings(includedCosts.map((cost) => cost.sellerSku))
+    uniqueStrings(costs.map((cost) => cost.sellerSku))
   );
 
-  return includedCosts
+  return costs
     .map((cost) => ({
       marketplace: cost.marketplace,
       sellerSku: cost.sellerSku,
@@ -2222,16 +2403,21 @@ function withSettlementAllocationMetadata(
   };
 }
 
-function isSettlementSemAdvertisingCost(cost: ProfitAdvertisingCostInput) {
-  return cost.source === "walmart_seller_center_sem" && isWalmartSettlementMetadata(cost.metadata);
-}
-
 function isWalmartSettlementMetadata(metadata: Record<string, unknown> | undefined) {
   return readMetadataText(metadata, "source") === "walmart_payments_new";
 }
 
 function isTransactionPostedSettlementMetadata(metadata: Record<string, unknown> | undefined) {
   return readMetadataText(metadata, "reportingDateSource") === "transaction_posted_timestamp";
+}
+
+function isSingleDaySettlementMetadata(metadata: Record<string, unknown> | undefined) {
+  const reportingDateSource = readMetadataText(metadata, "reportingDateSource");
+  return (
+    reportingDateSource === "transaction_posted_timestamp" ||
+    reportingDateSource === "settlement_period_end_unmatched_fee" ||
+    reportingDateSource === "transaction_posted_timestamp_missing_period_end"
+  );
 }
 
 function isDateInRange(date: Date | null | undefined, dateRange: SettlementDateRange) {
@@ -2247,21 +2433,6 @@ function readMetadataText(value: unknown, key: string) {
   const text = record?.[key];
 
   return typeof text === "string" ? text.trim() || null : null;
-}
-
-function isIncludedAdvertisingCost(cost: { source: string; metadata: unknown }) {
-  if (
-    cost.source === "walmart_seller_center_sem" &&
-    readMetadataText(cost.metadata, "source") === "walmart_payments_new"
-  ) {
-    return false;
-  }
-
-  if (cost.source !== "walmart_seller_center_sem") {
-    return true;
-  }
-
-  return true;
 }
 
 function readMetadataNumber(value: unknown) {

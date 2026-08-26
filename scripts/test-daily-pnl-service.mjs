@@ -79,7 +79,7 @@ const tests = [
     }
   },
   {
-    name: "allocates commission, fulfillment, and SEM by settlement overlap",
+    name: "allocates older settlement fees by overlap and includes settlement SEM by posted date",
     run() {
       const result = calculateDailyPnl({
         ...baseInput("sellerSku", range("2026-01-05", "2026-01-07")),
@@ -89,13 +89,13 @@ const tests = [
           settlementFee("fulfillment_fee", -280, "2026-01-01", "2026-01-14")
         ],
         advertisingCosts: [
-          settlementSem(-140, "2026-01-01", "2026-01-14")
+          settlementSem(-140, "2026-01-06")
         ]
       });
 
       assert.equal(result.summary.commissionFees, 300);
       assert.equal(result.summary.fulfillmentFees, 60);
-      assert.equal(result.summary.semAdvertisingCost, 30);
+      assert.equal(result.summary.semAdvertisingCost, 140);
       assert.equal(result.diagnostic.commission.details[0].overlapDays, 3);
     }
   },
@@ -350,18 +350,18 @@ function settlementFee(feeType, amount, start, end) {
   };
 }
 
-function settlementSem(amount, start, end) {
+function settlementSem(amount, postedDate) {
   return {
     marketplace: "walmart",
     sellerSku: "SKU-1",
     parentSku: "PARENT-1",
     source: "walmart_seller_center_sem",
     amount: Math.abs(amount),
-    costDate: new Date(`${end}T12:00:00.000Z`),
+    costDate: new Date(`${postedDate}T12:00:00.000Z`),
     metadata: {
       source: "walmart_payments_new",
-      periodStartDate: start,
-      periodEndDate: end,
+      reportingDateSource: "transaction_posted_timestamp",
+      transactionPostedTimestamp: `${postedDate}T12:00:00.000Z`,
       originalAmount: amount
     }
   };

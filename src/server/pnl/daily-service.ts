@@ -317,7 +317,7 @@ function prepareDailyFee(fee: ProfitFeeInput, dateRange: PnlDateRange) {
     return isDateWithinInclusiveRange(fee.postedAt, dateRange) ? fee : null;
   }
 
-  if (isTransactionPostedSettlementMetadata(fee.metadata)) {
+  if (isSingleDaySettlementMetadata(fee.metadata)) {
     return isDateWithinInclusiveRange(fee.postedAt, dateRange) ? fee : null;
   }
 
@@ -394,29 +394,7 @@ function prepareDailyAdvertisingCosts(costs: ProfitAdvertisingCostInput[], dateR
 }
 
 function prepareDailyAdvertisingCost(cost: ProfitAdvertisingCostInput, dateRange: PnlDateRange) {
-  if (cost.source !== SETTLEMENT_SEM_AD_SOURCE || !isSettlementMetadata(cost.metadata)) {
-    return isDateWithinInclusiveRange(cost.costDate, dateRange) ? cost : null;
-  }
-
-  const allocation = allocator.allocateForRange(
-    {
-      amount: cost.amount,
-      settlementPeriodStart: readMetadataText(cost.metadata, "periodStartDate"),
-      settlementPeriodEnd: readMetadataText(cost.metadata, "periodEndDate"),
-      postingDate: cost.costDate
-    },
-    dateRange
-  );
-
-  if (allocation.amount === 0) {
-    return null;
-  }
-
-  return {
-    ...cost,
-    amount: allocation.amount,
-    metadata: withSettlementAllocationMetadata(cost.metadata, allocation)
-  };
+  return isDateWithinInclusiveRange(cost.costDate, dateRange) ? cost : null;
 }
 
 function buildDailySalesSourceSummary(
@@ -637,6 +615,15 @@ function isSettlementMetadata(metadata: Record<string, unknown> | undefined) {
 
 function isTransactionPostedSettlementMetadata(metadata: Record<string, unknown> | undefined) {
   return readMetadataText(metadata, "reportingDateSource") === "transaction_posted_timestamp";
+}
+
+function isSingleDaySettlementMetadata(metadata: Record<string, unknown> | undefined) {
+  const reportingDateSource = readMetadataText(metadata, "reportingDateSource");
+  return (
+    reportingDateSource === "transaction_posted_timestamp" ||
+    reportingDateSource === "settlement_period_end_unmatched_fee" ||
+    reportingDateSource === "transaction_posted_timestamp_missing_period_end"
+  );
 }
 
 function isCommissionFee(fee: ProfitFeeInput | ProfitAdvertisingCostInput): fee is ProfitFeeInput {

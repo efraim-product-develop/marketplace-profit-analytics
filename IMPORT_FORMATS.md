@@ -23,7 +23,7 @@ Authoritative Walmart source rules:
 - Sales / GMV / orders / units / order date: Walmart PO reports.
 - SKU-to-parent product mapping: Walmart Item Sales reports, mapping only.
 - Refunds / marketplace commission / fulfillment fees / other Walmart fees / payout: Walmart settlement reports.
-- Seller Center SEM advertising: Seller Center SEM daily campaign reports.
+- Seller Center SEM advertising: Walmart Payments New settlement `SEM Marketing Fee` rows by transaction posted date.
 - Walmart Connect advertising: daily Walmart Connect advertising rows only.
 - COGS: effective-dated COGS records through `EffectiveCogsService`.
 
@@ -322,17 +322,20 @@ Skipped when:
 
 Status: implemented through `/imports/settlements` as a separate Walmart financial source.
 
-Settlement reports do not provide the P&L sales source. They provide refunds, marketplace commission, fulfillment fees, other Walmart fees and adjustments, and payout context. Seller Center SEM is intentionally excluded from settlement imports because SEM comes from `/imports/advertising`.
+Settlement reports do not provide the P&L sales source. They provide refunds, marketplace commission, fulfillment fees, Seller Center SEM, other Walmart fees and adjustments, and payout context.
 
 Rules:
 
 - Settlement `Sale + Product Price` rows are skipped for P&L sales so they cannot double-count PO sales.
 - Marketplace commission rows are stored as `MarketplaceFee` with `feeType = commission`.
 - WFS fulfillment fee rows are stored as `MarketplaceFee` with `feeType = fulfillment_fee`.
+- Commission and WFS fulfillment fee rows are linked to `SalesOrderItem` only when `Purchase Order # + Purchase Order line #` matches exactly one existing PO order line.
+- Commission and WFS fulfillment fee rows with no exact PO-line match remain marketplace-level and use `Transaction Posted Timestamp` as their reporting date.
 - Storage, return processing, adjustments, credits, and other non-order settlement fees are stored as standalone `MarketplaceFee` adjustments.
-- Seller Center SEM rows are skipped from active P&L and reported in import summary as excluded SEM rows.
+- Seller Center SEM rows are imported as marketplace-level `AdvertisingCost` rows with `source = "walmart_seller_center_sem"`.
 - Only `Transaction Type = Refund` and `Amount Type = Product Price` rows are stored as standalone `Refund` rows.
-- `Transaction Posted Timestamp` is the reporting date for settlement financial rows. Payout-period dates are retained only as audit metadata.
+- `Transaction Posted Timestamp` is the reporting date for refund rows and fee rows tied to a specific order line.
+- Standalone fee rows that cannot be tied to a specific order line use `Transaction Posted Timestamp` as the P&L reporting date. Settlement period dates are retained as audit metadata.
 - `PaymentSummary` total payable is saved in import history for payout context.
 - Settlement rows remain separate from PO sales rows. There is no PO-to-settlement sales matching or finalization workflow.
 
@@ -353,7 +356,7 @@ Retired sales files should not be uploaded through `/imports/sales`, should not 
 
 Status: implemented through `/ad-spend/upload`.
 
-This importer is for daily Walmart Connect Item Performance reports. Seller Center SEM spend uses the separate `/imports/advertising` SEM report importer instead of settlement rows.
+This importer is for daily Walmart Connect Item Performance reports. Seller Center SEM spend comes from Walmart Payments New settlement reports instead of a separate SEM upload.
 
 ### Expected File
 
@@ -457,13 +460,13 @@ Rejected when:
 - The P&L engine includes `AdvertisingCost` rows from `walmart_connect_item_performance`, `walmart_seller_center_sem`, and legacy `seller_center_sem` rows without knowing report formats.
 - Walmart Connect daily ad rows are included by actual `costDate` for day, week, custom, and monthly P&L.
 - Older monthly/cumulative Walmart Connect rows are ignored by P&L so cumulative uploads cannot inflate month, week, day, or custom reports.
-- Seller Center SEM spend comes from the separate SEM report importer, not Walmart settlement rows.
+- Seller Center SEM spend comes from Walmart Payments New settlement rows, not a separate active SEM report importer.
 
 ## Walmart Seller Center SEM Campaign Daily Report
 
-Status: implemented through `/imports/advertising`.
+Status: legacy parser retained, but no longer registered in the active Walmart generic import workflow.
 
-This importer supports the Walmart Seller Center `CAMPAIGN_LEVEL_DAILY_REPORT` export. The current report is campaign-level, not SKU-level, so SEM spend is stored at marketplace/campaign level and appears in P&L as Seller Center SEM Advertising without parent/SKU attribution.
+This parser supports the Walmart Seller Center `CAMPAIGN_LEVEL_DAILY_REPORT` export, but the active workflow no longer asks for this report. Seller Center SEM is imported from Walmart Payments New settlement reports.
 
 ### Expected Columns
 
@@ -519,7 +522,7 @@ Rejected when:
 
 ## Current Legacy Advertising Upload
 
-Status: implemented through `/advertising/upload`, but legacy. Seller Center SEM should now use `/imports/advertising`; Walmart Connect should use `/ad-spend/upload`.
+Status: implemented through `/advertising/upload`, but legacy. Seller Center SEM should now come from Walmart Payments New settlement reports; Walmart Connect should use `/ad-spend/upload`.
 
 ### Expected Columns
 
@@ -547,8 +550,8 @@ Optional:
 ### Duplicate Detection
 
 - No duplicate blocking exists for the legacy advertising upload path.
-- Do not use `/imports/settlements` with Walmart Payments New reports for Seller Center SEM imports.
-- The generic `/imports/advertising` Seller Center SEM path uses import history plus row-level update behavior.
+- Do not use this legacy path for current Walmart Seller Center SEM imports.
+- Walmart Payments New settlement import history and row-level duplicate keys now govern current Seller Center SEM imports.
 
 ### Validation Rules
 
@@ -583,8 +586,8 @@ Required for detection and import:
 
 ### Normalization Rules
 
-- `Transaction Posted Timestamp` becomes the reporting date for refund and fee rows.
-- `Period Start Date` and `Period End Date` are stored in audit metadata only and do not drive day/week/custom P&L allocation when a transaction posted timestamp exists.
+- `Transaction Posted Timestamp` becomes the reporting date for settlement refund rows and exact PO-line matched commission/fulfillment fee rows.
+- Unmatched commission, unmatched fulfillment, and other standalone fee rows use `Period End Date` as their single P&L reporting date so fees are not duplicated across overlapping months.
 - If a transaction row is missing period dates, the importer still records whether the payout period was inherited from `PaymentSummary`, but this is audit context rather than active allocation logic.
 - Metadata stores `periodDateSource` as `row`, `payment_summary`, or `missing` so diagnostics can distinguish row-level dates from inherited payout-period dates.
 - `Partner Item Id` becomes seller SKU when available.
@@ -601,7 +604,7 @@ Required for detection and import:
 - Lost/found/damaged inventory, WFS refunds, excess refund adjustments, and WFS inventory fee/reimbursement rows become `adjustment`.
 - Classified Other Walmart Fees & Adjustments store `classificationStatus`, `financialDirection`, `adjustmentCategory`, `adjustmentCategoryLabel`, `attributionScope`, and `productAttributionReliable` in metadata.
 - Unknown non-tax financial rows are marked `unsupported` in the import summary and excluded from active profit until mapped.
-- `SEM Marketing Fee` is excluded from active P&L in settlement imports. Seller Center SEM comes from `/imports/advertising`.
+- `SEM Marketing Fee` becomes a Seller Center SEM `AdvertisingCost` row with `source = "walmart_seller_center_sem"`.
 - `Commission on Product` becomes `MarketplaceFee.feeType = "commission"` as a settlement-derived financial row.
 - Tax rows are ignored for this application's P&L and are not included in sales, refunds, commission, fulfillment, other fees, advertising, or profit.
 - Non-refund product price rows are ignored because PO reports are the Walmart sales source. Promo, extra savings, and Walmart-funded savings rows are unsupported until their seller financial effect is intentionally mapped.
@@ -630,20 +633,22 @@ Skipped when:
 - Row is tax or another ignored amount type.
 - Row is promo, Walmart-funded savings, or another unsupported financial category that has not yet been deliberately mapped.
 - Row cannot be mapped to a supported refund or fee category.
-- Row is settlement SEM, which is intentionally excluded from this importer.
+- Row cannot be mapped to a supported refund, fee, advertising, or payout category.
 
 ### P&L Behavior
 
 - Settlement sale/product rows are skipped for P&L sales.
-- Marketplace commission and WFS fulfillment fees are standalone settlement-derived `MarketplaceFee` records.
+- Marketplace commission and WFS fulfillment fees are settlement-derived `MarketplaceFee` records. They are linked to PO order lines when the settlement row has an exact PO-line match.
+- Unmatched commission and WFS fulfillment fee rows stay marketplace-level, even if Walmart supplies a SKU, so product P&L is not fabricated from uncertain attribution.
 - Storage, return processing, refunded shipping, WFS inventory, adjustments, credits, and other classified non-order settlement fees remain standalone marketplace-level `MarketplaceFee` adjustments.
 - Settlement fee signs are respected: negative rows increase fees, positive rows reduce fees.
 - Settlement product-price refund rows are standalone `Refund` rows. They do not appear in Other Walmart Fees & Adjustments.
 - Settlement product-price refund rows reduce displayed Sales in the period of their `Transaction Posted Timestamp`; they are not subtracted again from Profit.
 - Unsupported financial rows are counted in import history and excluded from profit.
-- Seller Center SEM rows are not imported from settlements and do not create `AdvertisingCost` rows.
-- Day, week, month, quarter, year, and custom P&L ranges filter settlement financial rows by `Transaction Posted Timestamp`.
-- Settlement totals are not evenly allocated across payout days when an actual transaction posted timestamp exists.
+- Seller Center SEM rows are imported from settlements as marketplace-level `AdvertisingCost` rows and are filtered by `Transaction Posted Timestamp`.
+- Day, week, month, quarter, year, and custom P&L ranges filter settlement refunds and matched/order-line fees by `Transaction Posted Timestamp`.
+- Unmatched standalone settlement fees are filtered by the transaction posted date stored on the fee row.
+- Settlement totals are not evenly allocated across payout days.
 - PO report rows are the sales source. Settlement rows remain separate financial inputs.
 - Settlement Payout is a separate cash-flow metric and is not included in Profit.
 
@@ -655,7 +660,7 @@ Future settlement parsers should follow the same rule: normalize rows into gener
 
 ## Future Advertising Reports
 
-Status: planned for additional Walmart or marketplace advertising report types. Direct `/ad-spend/upload` currently imports Walmart Connect spend, and `/imports/advertising` imports Walmart Seller Center SEM.
+Status: planned for additional Walmart or marketplace advertising report types. Direct `/ad-spend/upload` currently imports Walmart Connect spend. Seller Center SEM currently comes from Walmart settlement reports.
 
 ### Expected Columns
 

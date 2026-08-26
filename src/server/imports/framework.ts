@@ -29,14 +29,14 @@ export const importKindConfigs: Record<ImportKind, ImportKindConfig> = {
     title: "Settlement Reports",
     description: "Upload marketplace settlement reports through the shared import pipeline.",
     fileHelp:
-      "Supports Walmart Payments New reports for refunds, commission, fulfillment fees, other Walmart fees, and settlement payout tracking. Seller Center SEM is handled by a separate report."
+      "Supports Walmart Payments New reports for refunds, commission, fulfillment fees, Seller Center SEM, other Walmart fees, and settlement payout tracking."
   },
   advertising: {
     kind: "advertising",
     eyebrow: "Imports",
-    title: "Seller Center SEM Reports",
-    description: "Upload Seller Center SEM reports through the shared import pipeline.",
-    fileHelp: "Supports Walmart Seller Center campaign-level daily SEM reports."
+    title: "Advertising Reports",
+    description: "Upload marketplace advertising reports through the shared import pipeline.",
+    fileHelp: "Seller Center SEM now comes from Walmart settlement reports. Walmart Connect uses the Walmart Connect ads upload."
   },
   inventory: {
     kind: "inventory",

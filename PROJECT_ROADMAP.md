@@ -38,7 +38,7 @@ The current app includes:
 - Sales import commit path that creates/updates products, listings, sales imports, orders, order items, categorized fee rows, and refunds.
 - Marketplace-neutral `Refund` model for imported refund rows.
 - Direct `/ad-spend/upload` workflow for previewing and importing monthly Walmart Connect Item Performance spend into `AdvertisingCost` rows.
-- Walmart Payments New settlement import through `/imports/settlements` for refunds, marketplace commission, WFS fulfillment fees, and classified Other Walmart Fees & Adjustments. Settlement SEM is excluded because Seller Center SEM comes from `/imports/advertising`.
+- Walmart Payments New settlement import through `/imports/settlements` for refunds, marketplace commission, WFS fulfillment fees, Seller Center SEM, classified Other Walmart Fees & Adjustments, and payout tracking.
 - Settlement Payout tracking stores Walmart `PaymentSummary.Total Payable` as a separate cash-flow metric with payout history, while keeping it out of Profit calculations.
 - SKU P&L and Parent P&L pages using database data, effective COGS lookup, marketplace commission, fulfillment fees, ad spend, missing COGS flags, and product profit metrics.
 - P&L engine support for imported refunds, categorized fee rows, standalone settlement-style fee/refund adjustments, Profit, Profit Margin %, and Profit / Unit.
@@ -108,15 +108,15 @@ Known operational state:
 ### Milestone 5: Walmart Report Import Foundation
 
 - Retired competing Walmart sales-summary/account-summary imports and reconciliation/fallback logic from P&L sales.
-- Adopted the new Walmart sales architecture: PO reports provide order-date sales, settlement reports provide refunds, fees, and payout, and Seller Center SEM uses a separate advertising report.
+- Adopted the new Walmart sales architecture: PO reports provide order-date sales, and settlement reports provide refunds, fees, Seller Center SEM, and payout.
 - Implemented Walmart PO report parser/committer for sales, including preview, validation, cancelled-row preservation, missing SKU reporting, import diagnostics, and duplicate-safe updates by PO number plus line number.
 - Implemented Walmart Item Sales mapping-only import for SKU-to-parent hierarchy, while keeping Item Sales GMV, orders, units, refunds, and other financial columns out of P&L.
 - Added generic import framework with report detection, preview, validation, duplicate file detection, import history, and commit dispatch.
 - Added `/imports/sales`, `/imports/settlements`, `/imports/advertising`, and `/imports/inventory`.
 - Added marketplace-neutral refund storage for sales uploads.
 - Implemented direct `/ad-spend/upload` preview and import flow for Walmart Connect Item Performance spend.
-- Implemented Walmart Payments New settlement import for refunds, marketplace commission, WFS fulfillment fees, and classified Other Walmart Fees & Adjustments. Settlement SEM is excluded from active P&L.
-- Implemented Walmart Seller Center SEM campaign-level daily import through `/imports/advertising`.
+- Implemented Walmart Payments New settlement import for refunds, marketplace commission, WFS fulfillment fees, Seller Center SEM, and classified Other Walmart Fees & Adjustments.
+- Removed standalone Seller Center SEM from the active Walmart import workflow so SEM comes from settlement reports.
 - Implemented `/imports/audit` as the read-only Walmart data-quality and P&L readiness screen.
 - Implemented `pnpm run validate:product-pnl` as the read-only command-line validation report for Marketplace P&L, Product P&L, marketplace-only/unallocated amounts, and data coverage.
 
@@ -154,10 +154,10 @@ Definition of done:
 - Obsolete competing sales-summary/account-summary and reconciliation paths are retired.
 - Walmart Connect item-performance spend can be imported through `/ad-spend/upload` without creating duplicate monthly ad cost rows.
 - Walmart Payments New reports can be imported through `/imports/settlements` and contribute posted-date settlement refunds, commission, fulfillment fees, other Walmart fees, and payout context to P&L.
-- Walmart Seller Center SEM campaign-level daily reports can be imported through `/imports/advertising` and contribute Seller Center SEM Advertising to P&L.
-- Overall Walmart Marketplace P&L uses the approved sources only: PO sales by order date, settlement refunds/fees by posted timestamp, historical COGS by PO order date, daily Seller Center SEM by campaign report date, daily Walmart Connect advertising by ad report date, and Settlement Payout as a separate cash-flow metric outside Profit.
+- Walmart Payments New settlement reports import Seller Center SEM rows as marketplace-level advertising by `Transaction Posted Timestamp`.
+- Overall Walmart Marketplace P&L uses the approved sources only: PO sales by order date, settlement refunds/fees/Seller Center SEM by posted timestamp, historical COGS by PO order date, daily Walmart Connect advertising by ad report date, and Settlement Payout as a separate cash-flow metric outside Profit.
 - Displayed Sales is now `Gross Sales - Refunds`, where Gross Sales is valid non-cancelled PO sales and Refunds are settlement product-price refunds by posted timestamp. Profit starts from Sales and does not subtract refunds again.
-- Campaign-level Seller Center SEM is included in overall marketplace Profit but excluded from Parent/SKU product allocation rows because the report has no SKU or item identifiers.
+- Settlement-derived Seller Center SEM is included in overall marketplace Profit but excluded from Parent/SKU product allocation rows when it has no reliable SKU or parent attribution.
 - Parent/SKU product P&L now includes only deterministically attributable financial components: PO sales, historical COGS, attributable settlement refunds, attributable marketplace commission, attributable fulfillment fees, and SKU-attributed Walmart Connect advertising.
 - Marketplace-only costs remain outside Parent/SKU product Profit and are surfaced through attribution diagnostics instead of being allocated.
 - `/imports/audit` shows source coverage, missing data, attribution gaps, and P&L readiness for a selected period without comparing against Item Sales financial columns, Overview, Item Performance sync, or settlement sale sources.
@@ -170,17 +170,17 @@ Definition of done:
 - Move all sales upload usage to `/imports/sales`.
 - Harden Walmart PO import after testing both Seller Fulfilled and WFS files from the current Seller Center export.
 - Harden Walmart Payments New settlement import as a separate financial source without changing PO sales rows.
-- Harden the Seller Center SEM parser after more campaign report samples are collected.
+- Harden settlement SEM classification after more Walmart Payments New samples are collected.
 - Expand settlement import audit and repair workflows.
 - Add clearer import status messaging and repair/retry affordances.
 - Add tests for report detection and parser normalization.
 
 ### Milestone 9: Walmart Profit Audit
 
-- Use `/imports/audit` after each import cycle to confirm PO sales, settlement fees/refunds/payout, Seller Center SEM, Walmart Connect advertising, and COGS coverage.
+- Use `/imports/audit` after each import cycle to confirm PO sales, settlement fees/refunds/SEM/payout, Walmart Connect advertising, and COGS coverage.
 - Validate product-level Profit against overall marketplace Profit with the read-only `validate:product-pnl` report after database connectivity is stable.
 - Add exportable report-level audit output if the on-screen audit proves useful.
-- Keep documenting that PO reports are authoritative for sales and order date; settlement reports are authoritative for refunds, commission, fulfillment fees, other Walmart fees, and payout; advertising reports are authoritative for Walmart Connect and Seller Center SEM spend; and COGS imports are authoritative for SKU costs.
+- Keep documenting that PO reports are authoritative for sales and order date; settlement reports are authoritative for refunds, commission, fulfillment fees, Seller Center SEM, other Walmart fees, and payout; Walmart Connect advertising reports are authoritative for Walmart Connect spend; and COGS imports are authoritative for SKU costs.
 - Add a repeatable real-data sanity report once local database reads are stable from Windows.
 
 ### Milestone 10: P&L Completeness

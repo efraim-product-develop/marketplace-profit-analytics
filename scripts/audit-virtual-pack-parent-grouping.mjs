@@ -34,6 +34,43 @@ async function main() {
   const mappingSource = itemSalesMappings.size ? "Item Sales mapping importer" : "Catalog fallback";
   const poRows = await getPoSalesBySku(organization.id, marketplace);
   const poBySku = new Map(poRows.map((row) => [normalizeSku(row.sellerSku), row]));
+  const poRowsByItemId = groupPoRowsByItemId(poRows);
+  const requestedSkuRows = skuFilter
+    ? Array.from(skuFilter).map((sku) => {
+        const mapping = mappings.get(sku) ?? null;
+        const catalogMapping = catalogMappings.get(sku) ?? null;
+        const po = poBySku.get(sku) ?? null;
+        const itemIdPoRows = poRowsByItemId.get(sku) ?? [];
+        const resolvedParent = mapping?.parentSku ?? catalogMapping?.parentSku ?? po?.storedParentSku ?? null;
+        const itemIdPoGrossSales = itemIdPoRows.reduce((sum, row) => sum + row.grossSales, 0);
+        const itemIdUnits = itemIdPoRows.reduce((sum, row) => sum + row.units, 0);
+        const itemIdOrders = itemIdPoRows.reduce((sum, row) => sum + row.orders, 0);
+
+        return {
+          sellerSku: sku,
+          poFound: Boolean(po),
+          poGrossSales: po?.grossSales ?? 0,
+          units: po?.units ?? 0,
+          orders: po?.orders ?? 0,
+          poItemIdFound: itemIdPoRows.length > 0,
+          poItemIdGrossSales: itemIdPoGrossSales,
+          poItemIdUnits: itemIdUnits,
+          poItemIdOrders: itemIdOrders,
+          poItemIdSellerSkus: uniqueStrings(itemIdPoRows.map((row) => row.sellerSku)).join(", "),
+          storedPoParent: po?.storedParentSku ?? null,
+          resolvedParent,
+          mappingStatus: po
+            ? resolvedParent
+              ? "PO sales found with parent mapping"
+              : "PO sales found but parent unmapped"
+            : itemIdPoRows.length
+              ? "Found as PO Item ID, not as seller SKU"
+            : resolvedParent
+              ? "No PO sales found; parent mapping exists"
+              : "No PO sales or parent mapping found"
+        };
+      })
+    : [];
 
   const auditedRows = Array.from(mappings.values())
     .filter((row) => !skuFilter || skuFilter.has(normalizeSku(row.sellerSku)))
@@ -123,6 +160,32 @@ async function main() {
       ].map(escapeMarkdownCell).join(" | ").replace(/^/, "| ").replace(/$/, " |")
     ),
     "",
+    skuFilter ? "## Requested SKU PO Sales Check" : "",
+    skuFilter ? "" : "",
+    ...(skuFilter
+      ? [
+          "| Requested Value | Found as PO SKU | PO SKU Gross Sales | PO SKU Units | PO SKU Orders | Found as PO Item ID | Item ID Gross Sales | Item ID Units | Item ID Orders | Item ID Seller SKUs | Stored PO Parent | Resolved Parent | Status |",
+          "| --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- | --- | --- | --- |",
+          ...requestedSkuRows.map((row) =>
+            [
+              row.sellerSku,
+              row.poFound ? "Yes" : "No",
+              formatMoney.format(row.poGrossSales),
+              String(row.units),
+              String(row.orders),
+              row.poItemIdFound ? "Yes" : "No",
+              formatMoney.format(row.poItemIdGrossSales),
+              String(row.poItemIdUnits),
+              String(row.poItemIdOrders),
+              row.poItemIdSellerSkus || "-",
+              row.storedPoParent ?? "-",
+              row.resolvedParent ?? "-",
+              row.mappingStatus
+            ].map(escapeMarkdownCell).join(" | ").replace(/^/, "| ").replace(/$/, " |")
+          )
+        ]
+      : []),
+    "",
     "## PO SKUs With No Parent Mapping",
     "",
     unmappedPoRows.length
@@ -165,9 +228,30 @@ async function main() {
     poSkusWithSales: poRows.length,
     explicitVirtualRows: virtualRows.length,
     reportedRows: reportedRows.length,
+    requestedSkusChecked: requestedSkuRows.length,
     unmappedPoSkus: unmappedPoRows.length,
     report: outputPath
   });
+
+  if (requestedSkuRows.length) {
+    console.log("Requested SKU PO sales check:");
+    console.table(
+      requestedSkuRows.map((row) => ({
+        sku: row.sellerSku,
+        poSalesFound: row.poFound ? "Yes" : "No",
+        poGrossSales: roundMoney(row.poGrossSales),
+        units: row.units,
+        orders: row.orders,
+        poItemIdFound: row.poItemIdFound ? "Yes" : "No",
+        poItemIdGrossSales: roundMoney(row.poItemIdGrossSales),
+        poItemIdUnits: row.poItemIdUnits,
+        poItemIdSellerSkus: row.poItemIdSellerSkus || "-",
+        storedPoParent: row.storedPoParent ?? "-",
+        resolvedParent: row.resolvedParent ?? "-",
+        status: row.mappingStatus
+      }))
+    );
+  }
 
   console.table(
     reportedRows.slice(0, 30).map((row) => ({
@@ -279,6 +363,7 @@ async function getPoSalesBySku(organizationId, marketplace) {
   const rows = await prisma.$queryRaw`
     SELECT
       soi."sellerSku",
+      MAX(soi."poItemId") FILTER (WHERE soi."poItemId" IS NOT NULL) AS "poItemId",
       MAX(soi."parentSku") FILTER (WHERE soi."parentSku" IS NOT NULL) AS "storedParentSku",
       COALESCE(SUM(soi."itemRevenue"), 0)::float AS "grossSales",
       COALESCE(SUM(soi."quantity"), 0)::int AS "units",
@@ -296,11 +381,28 @@ async function getPoSalesBySku(organizationId, marketplace) {
 
   return rows.map((row) => ({
     sellerSku: normalizeSku(row.sellerSku),
+    poItemId: row.poItemId ? normalizeSku(row.poItemId) : null,
     storedParentSku: row.storedParentSku ? normalizeSku(row.storedParentSku) : null,
     grossSales: Number(row.grossSales) || 0,
     units: Number(row.units) || 0,
     orders: Number(row.orders) || 0
   }));
+}
+
+function groupPoRowsByItemId(rows) {
+  const rowsByItemId = new Map();
+
+  for (const row of rows) {
+    if (!row.poItemId) {
+      continue;
+    }
+
+    const group = rowsByItemId.get(row.poItemId) ?? [];
+    group.push(row);
+    rowsByItemId.set(row.poItemId, group);
+  }
+
+  return rowsByItemId;
 }
 
 function getVirtualSignal(mapping, catalogMapping) {
@@ -400,6 +502,16 @@ function optionalString(value) {
 
   const stringValue = String(value).trim();
   return stringValue || null;
+}
+
+function uniqueStrings(values) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => optionalString(value))
+        .filter(Boolean)
+    )
+  );
 }
 
 function roundMoney(value) {
