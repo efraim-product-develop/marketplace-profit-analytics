@@ -2556,7 +2556,7 @@ async function getAdvertisingCosts(
 
 export async function getSkuPnlFilterOptions(marketplace?: string): Promise<SkuPnlFilterOptions> {
   const organizationId = await getCurrentOrganizationId();
-  const [parents, products, feeRows] =
+  const [parents, products, feeMetadataFilters] =
     await Promise.all([
       getParentSkuOptions(organizationId, marketplace),
       prisma.product.findMany({
@@ -2564,16 +2564,10 @@ export async function getSkuPnlFilterOptions(marketplace?: string): Promise<SkuP
         distinct: ["brand"],
         select: { brand: true }
       }),
-      prisma.marketplaceFee.findMany({
-        where: {
-          organizationId,
-          ...(marketplace ? { marketplace } : {})
-        },
-        select: { metadata: true }
-      })
+      getFeeMetadataFilterOptions(organizationId, marketplace)
     ]);
-  const metadataBrands = feeRows.map((row) => readMetadataText(row.metadata, "brand"));
-  const metadataDepartments = feeRows.map((row) => readMetadataText(row.metadata, "department"));
+  const metadataBrands = feeMetadataFilters.map((row) => row.brand);
+  const metadataDepartments = feeMetadataFilters.map((row) => row.department);
 
   return {
     parents,
@@ -2581,6 +2575,21 @@ export async function getSkuPnlFilterOptions(marketplace?: string): Promise<SkuP
     brands: toFilterOptions(uniqueStrings([...products.map((row) => row.brand), ...metadataBrands])),
     departments: toFilterOptions(uniqueStrings(metadataDepartments))
   };
+}
+
+async function getFeeMetadataFilterOptions(organizationId: string, marketplace?: string) {
+  return prisma.$queryRaw<Array<{ brand: string | null; department: string | null }>>(Prisma.sql`
+    SELECT DISTINCT
+      NULLIF(BTRIM("metadata"->>'brand'), '') AS "brand",
+      NULLIF(BTRIM("metadata"->>'department'), '') AS "department"
+    FROM "MarketplaceFee"
+    WHERE "organizationId" = ${organizationId}
+      ${marketplace ? Prisma.sql`AND "marketplace" = ${marketplace}` : Prisma.empty}
+      AND (
+        NULLIF(BTRIM("metadata"->>'brand'), '') IS NOT NULL
+        OR NULLIF(BTRIM("metadata"->>'department'), '') IS NOT NULL
+      )
+  `);
 }
 
 async function getParentSkuOptions(
