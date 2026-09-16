@@ -94,6 +94,7 @@ export type ProfitRow = ProfitGroupKey & {
   marketplaceFees: number;
   commissionFees: number;
   fulfillmentFees: number;
+  sellerFulfilledShippingCost: number;
   shippingFees: number;
   storageFees: number;
   returnFees: number;
@@ -103,6 +104,7 @@ export type ProfitRow = ProfitGroupKey & {
   semAdvertisingCost: number;
   walmartConnectAdvertisingCost: number;
   advertisingCost: number;
+  tacosPercent: number;
   cogs: number;
   grossProfit: number;
   grossMarginPercent: number;
@@ -141,6 +143,7 @@ export type ProductAttributionDiagnostics = {
   totalWalmartConnectAdvertising: number;
   walmartConnectAdvertisingReconciliationDifference: number;
   sellerCenterSemAdvertising: number;
+  sellerFulfilledShippingCost: number;
   marketplaceOnlyOtherWalmartFees: number;
 };
 
@@ -162,6 +165,7 @@ export type ParentPnlPeriodTile = {
   marketplaceFees: number;
   commissionFees: number;
   fulfillmentFees: number;
+  sellerFulfilledShippingCost: number;
   shippingFees: number;
   storageFees: number;
   returnFees: number;
@@ -172,6 +176,7 @@ export type ParentPnlPeriodTile = {
   semAdvertisingCost: number;
   walmartConnectAdvertisingCost: number;
   advertisingCost: number;
+  tacosPercent: number;
   cogs: number;
   grossProfit: number;
   grossProfitChangePercent: number | null;
@@ -199,6 +204,7 @@ export type ParentPnlMonthlyComparisonRow = {
   marketplaceFees: number;
   commissionFees: number;
   fulfillmentFees: number;
+  sellerFulfilledShippingCost: number;
   shippingFees: number;
   storageFees: number;
   returnFees: number;
@@ -209,6 +215,7 @@ export type ParentPnlMonthlyComparisonRow = {
   semAdvertisingCost: number;
   walmartConnectAdvertisingCost: number;
   advertisingCost: number;
+  tacosPercent: number;
   cogs: number;
   grossProfit: number;
   netProfit: number;

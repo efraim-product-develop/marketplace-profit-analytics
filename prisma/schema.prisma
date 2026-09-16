@@ -497,6 +497,8 @@ model SalesOrderItem {
 
   @@index([organizationId, marketplace, sellerSku])
   @@index([organizationId, parentSku])
+  @@index([organizationId, marketplace, orderId], map: "SalesOrderItem_order_lookup_idx")
+  @@index([organizationId, marketplace, parentSku, sellerSku], map: "SalesOrderItem_parent_sku_idx")
   @@index([organizationId, marketplace, purchaseOrderNumber], map: "SalesOrderItem_po_lookup_idx")
   @@index([organizationId, marketplace, purchaseOrderNumber, purchaseOrderLineNumber], map: "SalesOrderItem_po_line_lookup_idx")
 }
@@ -520,6 +522,10 @@ model MarketplaceFee {
 
   @@index([organizationId, marketplace, feeType])
   @@index([organizationId, sellerSku])
+  @@index([organizationId, orderId], map: "MarketplaceFee_order_lookup_idx")
+  @@index([organizationId, orderItemId], map: "MarketplaceFee_order_item_lookup_idx")
+  @@index([organizationId, marketplace, postedAt], map: "MarketplaceFee_posted_at_idx")
+  @@index([organizationId, marketplace, sellerSku, postedAt], map: "MarketplaceFee_sku_posted_at_idx")
 }
 
 model Refund {
@@ -543,6 +549,9 @@ model Refund {
   @@index([organizationId, marketplace, refundDate])
   @@index([organizationId, sellerSku])
   @@index([organizationId, marketplace, externalOrderId])
+  @@index([organizationId, orderId], map: "Refund_order_lookup_idx")
+  @@index([organizationId, orderItemId], map: "Refund_order_item_lookup_idx")
+  @@index([organizationId, marketplace, sellerSku, refundDate], map: "Refund_sku_refund_date_idx")
 }
 
 model AdvertisingCost {
@@ -565,4 +574,6 @@ model AdvertisingCost {
   @@index([organizationId, marketplace, source, costDate])
   @@index([organizationId, sellerSku])
   @@index([organizationId, parentSku])
+  @@index([organizationId, marketplace, sellerSku, costDate], map: "AdvertisingCost_sku_date_idx")
+  @@index([organizationId, marketplace, parentSku, costDate], map: "AdvertisingCost_parent_date_idx")
 }

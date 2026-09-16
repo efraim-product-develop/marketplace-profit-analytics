@@ -415,7 +415,18 @@ const feeLinkingCsv = [
     amountType: "Commission on Product",
     purchaseOrder: "PO-123",
     purchaseOrderLine: "1",
-    sku: ""
+    sku: "PO-SKU"
+  }),
+  settlementRow({
+    transactionKey: "ambiguous-commission",
+    postedAt: "01/10/2026",
+    transactionType: "Sale",
+    description: "Commission",
+    amount: "-1.11",
+    amountType: "Commission on Product",
+    purchaseOrder: "PO-456",
+    purchaseOrderLine: "1",
+    sku: "DUP-SKU"
   }),
   settlementRow({
     transactionKey: "unmatched-fulfillment",
@@ -445,10 +456,27 @@ const feeLinks = resolveSettlementFeeOrderLineMatches(feeLinkRows, [
     sellerSku: "PO-SKU",
     purchaseOrderNumber: "PO-123",
     purchaseOrderLineNumber: "1"
+  },
+  {
+    id: "order-item-2",
+    orderId: "order-2",
+    sellerSku: "DUP-SKU",
+    purchaseOrderNumber: "PO-456",
+    purchaseOrderLineNumber: "1"
+  },
+  {
+    id: "order-item-3",
+    orderId: "order-3",
+    sellerSku: "DUP-SKU",
+    purchaseOrderNumber: "PO-456",
+    purchaseOrderLineNumber: "2"
   }
 ]);
 const matchedFeeLink = feeLinks.get(
   feeLinkRows.find((row) => row.transactionKey === "matched-commission").duplicateKey
+);
+const ambiguousFeeLink = feeLinks.get(
+  feeLinkRows.find((row) => row.transactionKey === "ambiguous-commission").duplicateKey
 );
 const unmatchedFeeLink = feeLinks.get(
   feeLinkRows.find((row) => row.transactionKey === "unmatched-fulfillment").duplicateKey
@@ -459,6 +487,11 @@ assert.equal(matchedFeeLink.orderItemId, "order-item-1");
 assert.equal(matchedFeeLink.sellerSku, "PO-SKU");
 assert.equal(matchedFeeLink.reportingDate.slice(0, 10), "2026-01-10");
 assert.equal(matchedFeeLink.productAttributionReliable, true);
+assert.equal(ambiguousFeeLink.matchStatus, "ambiguous");
+assert.equal(ambiguousFeeLink.orderId, null);
+assert.equal(ambiguousFeeLink.orderItemId, null);
+assert.equal(ambiguousFeeLink.sellerSku, null);
+assert.equal(ambiguousFeeLink.productAttributionReliable, false);
 assert.equal(unmatchedFeeLink.matchStatus, "not_found");
 assert.equal(unmatchedFeeLink.orderId, null);
 assert.equal(unmatchedFeeLink.orderItemId, null);

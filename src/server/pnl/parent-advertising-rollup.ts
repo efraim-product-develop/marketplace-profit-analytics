@@ -112,6 +112,7 @@ function recalculateAfterWalmartConnectAdjustment(row: ProfitRow, addedWalmartCo
 
   next.netProfit = roundMoney(next.grossProfit - next.advertisingCost);
   next.contributionProfit = next.netProfit;
+  next.tacosPercent = next.netRevenue === 0 ? 0 : (next.advertisingCost / next.netRevenue) * 100;
   next.marginPercent = next.netRevenue === 0 ? 0 : (next.netProfit / next.netRevenue) * 100;
   next.netMarginPercent = next.marginPercent;
   next.profitPerUnit = next.quantity === 0 ? 0 : next.netProfit / next.quantity;
@@ -152,6 +153,7 @@ function createEmptyCatalogChildSkuRow({
     marketplaceFees: 0,
     commissionFees: 0,
     fulfillmentFees: 0,
+    sellerFulfilledShippingCost: 0,
     shippingFees: 0,
     storageFees: 0,
     returnFees: 0,
@@ -161,6 +163,7 @@ function createEmptyCatalogChildSkuRow({
     semAdvertisingCost: 0,
     walmartConnectAdvertisingCost: 0,
     advertisingCost: 0,
+    tacosPercent: 0,
     cogs: 0,
     grossProfit: 0,
     grossMarginPercent: 0,

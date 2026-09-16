@@ -1,4 +1,4 @@
-import type { MarketplaceFee, Prisma, Refund } from "@prisma/client";
+import { Prisma, type MarketplaceFee, type Refund } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { EffectiveCogsService } from "@/server/cogs/effective-cogs";
 import { resolveAdvertisingCostParentSku } from "@/server/pnl/advertising-parent-resolution";
@@ -31,6 +31,10 @@ import {
   SettlementPeriodAllocator,
   type SettlementDateRange
 } from "@/server/pnl/settlement-period-allocator";
+import {
+  isSellerFulfilledShippingMetadata,
+  SELLER_FULFILLED_SHIPPING_FEE_TYPE
+} from "@/server/pnl/seller-fulfilled-shipping-types";
 import { selectDashboardProfitLines } from "@/server/pnl/source-selection";
 import { sortSettlementPayoutHistoryRows } from "@/server/settlements/payouts";
 import type {
@@ -53,12 +57,36 @@ import type {
   SkuPnlOrderDrilldownRow
 } from "@/server/pnl/types";
 
-const profitLineItemInclude = {
-  fees: true,
-  refunds: true,
-  order: true,
-  product: true
-} satisfies Prisma.SalesOrderItemInclude;
+const profitLineItemSelect = {
+  id: true,
+  orderId: true,
+  marketplace: true,
+  sellerSku: true,
+  parentSku: true,
+  externalLineId: true,
+  quantity: true,
+  unitPrice: true,
+  itemRevenue: true,
+  shippingRevenue: true,
+  taxCollected: true,
+  discountAmount: true,
+  cogsUnit: true,
+  cogsTotal: true,
+  poOrderStatus: true,
+  poFulfillmentType: true,
+  order: {
+    select: {
+      externalOrderId: true,
+      orderDate: true,
+      status: true
+    }
+  },
+  product: {
+    select: {
+      brand: true
+    }
+  }
+} satisfies Prisma.SalesOrderItemSelect;
 
 const PRISMA_IN_FILTER_CHUNK_SIZE = 10_000;
 const PNL_ADVERTISING_SOURCES = [
@@ -69,9 +97,55 @@ const PNL_ADVERTISING_SOURCES = [
 const SETTLEMENT_ALLOCATOR = new SettlementPeriodAllocator();
 const SETTLEMENT_ALLOCATION_METADATA_KEY = "settlementAllocation";
 
-type ProfitLineItem = Prisma.SalesOrderItemGetPayload<{
-  include: typeof profitLineItemInclude;
-}>;
+type ProfitLineItem = {
+  id: string;
+  orderId: string;
+  marketplace: string;
+  sellerSku: string;
+  parentSku: string | null;
+  externalLineId: string | null;
+  quantity: number;
+  unitPrice: unknown;
+  itemRevenue: unknown;
+  shippingRevenue: unknown;
+  taxCollected: unknown;
+  discountAmount: unknown;
+  cogsUnit: unknown | null;
+  cogsTotal: unknown;
+  poOrderStatus: string | null;
+  poFulfillmentType: string | null;
+  order: {
+    externalOrderId: string;
+    orderDate: Date;
+    status: string | null;
+  };
+  product: {
+    brand: string | null;
+  } | null;
+};
+
+type PnlMarketplaceFee = Pick<
+  MarketplaceFee,
+  | "marketplace"
+  | "sellerSku"
+  | "feeType"
+  | "feeAmount"
+  | "postedAt"
+  | "metadata"
+  | "orderId"
+  | "orderItemId"
+>;
+
+type PnlRefund = Pick<
+  Refund,
+  | "marketplace"
+  | "sellerSku"
+  | "refundAmount"
+  | "refundDate"
+  | "metadata"
+  | "orderId"
+  | "orderItemId"
+>;
 
 type LineAllocationRef = {
   item: ProfitLineItem;
@@ -81,12 +155,13 @@ type LineAllocationRef = {
 export async function getSkuPnl(filters: SkuPnlFilters = {}, selectedSku = "") {
   const organizationId = await getCurrentOrganizationId();
   const useDailyPnlPath = shouldUseDailyPnlPath(filters.dateRange);
+  const loadDateRange = filters.dateRange ?? getPnlDataLoadRange("month");
   const parentSellerSkus = filters.parentSku
     ? await getSellerSkusForParent(organizationId, filters.parentSku)
     : [];
   const lineSelection = await getProfitLineSelection(
     organizationId,
-    filters.dateRange,
+    loadDateRange,
     filters.parentSku,
     parentSellerSkus,
     filters,
@@ -101,7 +176,8 @@ export async function getSkuPnl(filters: SkuPnlFilters = {}, selectedSku = "") {
         organizationId,
         shouldUseFilteredAdSkus ? undefined : filters.parentSku,
         shouldUseFilteredAdSkus ? filteredSellerSkus : parentSellerSkus,
-        filters.marketplace
+        filters.marketplace,
+        loadDateRange
       );
   const periodAdvertisingCosts = prepareAdvertisingCostsForDateRange(
     advertisingCosts,
@@ -219,31 +295,44 @@ export async function getParentPnl({
   comparisonPeriod = "month",
   marketplace,
   parentSku,
-  selectedSku
+  selectedSku,
+  includeMonthlyComparisonRows = false,
+  includeSkuRows = true
 }: {
   dateRange?: PnlDateRange;
   comparisonPeriod?: PnlComparisonPeriod;
   marketplace?: string;
   parentSku?: string;
   selectedSku?: string;
+  includeMonthlyComparisonRows?: boolean;
+  includeSkuRows?: boolean;
 } = {}) {
+  const timer = createPnlTimer("parent-pnl");
+  const lineSelectionTimer = createPnlTimer("parent-line-selection");
   const organizationId = await getCurrentOrganizationId();
+  timer.mark("organization");
   const useDailyPnlPath = shouldUseDailyPnlPath(dateRange, comparisonPeriod);
+  const loadDateRange = getPnlDataLoadRange(comparisonPeriod, dateRange);
   const [parentOptions, childSkus] = await Promise.all([
     getParentSkuOptions(organizationId, marketplace),
     parentSku ? getSellerSkusForParent(organizationId, parentSku, marketplace) : Promise.resolve([])
   ]);
+  timer.mark("options");
   const [lineSelection, advertisingCosts] = await Promise.all([
     getProfitLineSelection(
       organizationId,
-      dateRange,
+      loadDateRange,
       parentSku,
       childSkus,
       { marketplace },
-      { sourceMode: useDailyPnlPath ? "daily" : "dashboard" }
+      {
+        sourceMode: useDailyPnlPath ? "daily" : "dashboard",
+        timer: lineSelectionTimer
+      }
     ),
-    getAdvertisingCosts(organizationId, parentSku, childSkus, marketplace)
+    getAdvertisingCosts(organizationId, parentSku, childSkus, marketplace, loadDateRange)
   ]);
+  timer.mark("lines-and-ads");
   const lines = lineSelection.lines;
   const periodTiles = calculateParentPeriodTiles(
     lines,
@@ -258,6 +347,7 @@ export async function getParentPnl({
     marketplace,
     !parentSku
   );
+  timer.mark("period-tiles");
   const hasExplicitDateRange = Boolean(dateRange?.from || dateRange?.to);
   const defaultPeriodRange = !hasExplicitDateRange ? getTileDateRange(periodTiles[0]) : null;
   const rollupLines = defaultPeriodRange
@@ -284,6 +374,7 @@ export async function getParentPnl({
     refundAdjustments: rollupRefundAdjustments,
     advertisingCosts: rollupAdvertisingCosts
   });
+  timer.mark("rollup-prep");
   const dailyRollupResult =
     useDailyPnlPath && (defaultPeriodRange || dateRange)
       ? calculateDailyPnl({
@@ -312,8 +403,10 @@ export async function getParentPnl({
         rollupLines,
         "parentSku"
       );
+  timer.mark("parent-rows");
+  const shouldLoadSkuRows = includeSkuRows || Boolean(selectedSku);
   const dailySkuResult =
-    dailyRollupResult && (defaultPeriodRange || dateRange)
+    shouldLoadSkuRows && dailyRollupResult && (defaultPeriodRange || dateRange)
       ? calculateDailyPnl({
           organizationId,
           marketplace: marketplace ?? "",
@@ -325,21 +418,23 @@ export async function getParentPnl({
           feeAdjustments: productRollupFeeAdjustments,
           refundAdjustments: productRollupRefundAdjustments,
           sellerCenterSemMode: "exclude"
-        })
+      })
       : null;
-  const skuRows = dailySkuResult
-    ? decorateProfitRows(dailySkuResult.rows, dailySkuResult.lines, "sellerSku")
-    : decorateProfitRows(
-        calculateProfitRows(
+  const skuRows = shouldLoadSkuRows
+    ? dailySkuResult
+      ? decorateProfitRows(dailySkuResult.rows, dailySkuResult.lines, "sellerSku")
+      : decorateProfitRows(
+          calculateProfitRows(
+            rollupLines,
+            "sellerSku",
+            productRollupAdvertisingCosts,
+            productRollupFeeAdjustments,
+            productRollupRefundAdjustments
+          ),
           rollupLines,
-          "sellerSku",
-          productRollupAdvertisingCosts,
-          productRollupFeeAdjustments,
-          productRollupRefundAdjustments
-        ),
-        rollupLines,
-        "sellerSku"
-      );
+          "sellerSku"
+        )
+    : [];
   const displayRows = await appendSelectedParentRowIfMissing({
     organizationId,
     marketplace,
@@ -347,14 +442,20 @@ export async function getParentPnl({
     rows,
     skuRows
   });
-  const skuRowsWithCatalogChildren = await appendCatalogChildSkuRowsForParents({
-    organizationId,
-    marketplace,
-    parentRows: displayRows,
-    skuRows,
-    selectedParentSku: parentSku
-  });
-  const reconciledRows = reconcileParentAdvertisingFromSkuRows(displayRows, skuRowsWithCatalogChildren);
+  timer.mark("sku-rows");
+  const skuRowsWithCatalogChildren = shouldLoadSkuRows
+    ? await appendCatalogChildSkuRowsForParents({
+        organizationId,
+        marketplace,
+        parentRows: displayRows,
+        skuRows,
+        selectedParentSku: parentSku
+      })
+    : [];
+  const reconciledRows = shouldLoadSkuRows
+    ? reconcileParentAdvertisingFromSkuRows(displayRows, skuRowsWithCatalogChildren)
+    : displayRows;
+  timer.mark("row-reconcile");
   const settlementAllocation = dailyRollupResult
     ? dailyRollupResult.settlementAllocation
     : summarizeSettlementAllocation([
@@ -384,23 +485,40 @@ export async function getParentPnl({
     marketplace,
     payoutDateRange
   );
+  timer.mark("payouts");
+  timer.finish({
+    comparisonPeriod,
+    marketplace,
+    parentSku,
+    selectedSku,
+    dateRange: describeDateRange(dateRange),
+    loadDateRange: describeDateRange(loadDateRange),
+    rows: reconciledRows.length,
+    skuRows: skuRowsWithCatalogChildren.length,
+    lines: lineSelection.lines.length,
+    feeAdjustments: lineSelection.feeAdjustments.length,
+    refundAdjustments: lineSelection.refundAdjustments.length,
+    advertisingCosts: advertisingCosts.length
+  });
   return {
     rows: reconciledRows,
     skuRows: skuRowsWithCatalogChildren,
     periodTiles,
-    monthlyComparisonRows: calculateParentMonthlyComparisonRows(
-      lines,
-      advertisingCosts,
-      lineSelection.suppressedDetailLines,
-      lineSelection.feeAdjustments,
-      lineSelection.refundAdjustments,
-      dateRange,
-      comparisonPeriod,
-      useDailyPnlPath,
-      organizationId,
-      marketplace,
-      !parentSku
-    ),
+    monthlyComparisonRows: includeMonthlyComparisonRows
+      ? calculateParentMonthlyComparisonRows(
+          lines,
+          advertisingCosts,
+          lineSelection.suppressedDetailLines,
+          lineSelection.feeAdjustments,
+          lineSelection.refundAdjustments,
+          dateRange,
+          comparisonPeriod,
+          useDailyPnlPath,
+          organizationId,
+          marketplace,
+          !parentSku
+        )
+      : [],
     parentOptions,
     summary: marketplaceRollupSummary,
     salesSource: dailyRollupResult
@@ -493,28 +611,35 @@ async function getProfitLineSelection(
   parentSku?: string,
   sellerSkus: string[] = [],
   filters: Pick<SkuPnlFilters, "marketplace" | "brand" | "department"> = {},
-  options: { sourceMode?: "dashboard" | "daily" } = {}
+  options: { sourceMode?: "dashboard" | "daily"; timer?: ReturnType<typeof createPnlTimer> } = {}
 ): Promise<ProfitLineSelection> {
   const orderDate = buildDateRangeWhere(dateRange);
+  const useDateScopedAttachedAdjustments = shouldUseDateScopedAttachedAdjustments(
+    parentSku,
+    sellerSkus,
+    filters
+  );
   const [items, costRecords] = await Promise.all([
-    prisma.salesOrderItem.findMany({
-      where: {
-        organizationId,
-        ...(filters.marketplace ? { marketplace: filters.marketplace } : {}),
-        ...buildParentSkuLineWhere(parentSku, sellerSkus),
-        order: {
-          is: {
-            ...(orderDate ? { orderDate } : {}),
-            OR: [
-              { importId: null },
-              { salesImport: { is: { status: { in: ["IMPORTED", "NEEDS_REVIEW"] } } } }
-            ]
-          }
-        }
-      },
-      include: profitLineItemInclude,
-      orderBy: [{ marketplace: "asc" }, { sellerSku: "asc" }]
-    }),
+    useDateScopedAttachedAdjustments
+      ? getLeanProfitLineItems(organizationId, dateRange, filters.marketplace)
+      : prisma.salesOrderItem.findMany({
+          where: {
+            organizationId,
+            ...(filters.marketplace ? { marketplace: filters.marketplace } : {}),
+            ...buildParentSkuLineWhere(parentSku, sellerSkus),
+            order: {
+              is: {
+                ...(orderDate ? { orderDate } : {}),
+                OR: [
+                  { importId: null },
+                  { salesImport: { is: { status: { in: ["IMPORTED", "NEEDS_REVIEW"] } } } }
+                ]
+              }
+            }
+          },
+          select: profitLineItemSelect,
+          orderBy: [{ marketplace: "asc" }, { sellerSku: "asc" }]
+        }),
     prisma.costRecord.findMany({
       where: {
         organizationId,
@@ -523,30 +648,72 @@ async function getProfitLineSelection(
       orderBy: [{ effectiveDate: "desc" }, { createdAt: "desc" }]
     })
   ]);
+  options.timer?.mark("items-and-cogs");
 
   const orderIds = uniqueStrings(items.map((item) => item.orderId));
+  const itemIds = uniqueStrings(items.map((item) => item.id));
+  const orderIdSet = new Set(orderIds);
+  const itemIdSet = new Set(itemIds);
   const parentSkuBySellerSku = getParentSkuBySellerSku(items);
-  const [orderLevelFees, standaloneFees, orderLevelRefunds, standaloneRefunds] =
-    await Promise.all([
-      getOrderLevelFees(organizationId, orderIds),
-      getStandaloneFees(organizationId, dateRange, parentSku, sellerSkus, filters.marketplace),
-      getOrderLevelRefunds(organizationId, orderIds),
+  const [
+    attachedFees,
+    standaloneFees,
+    attachedRefunds,
+    standaloneRefunds
+  ] = useDateScopedAttachedAdjustments
+    ? await Promise.all([
+        getAttachedFeesByPostedDate(organizationId, dateRange, filters.marketplace),
+        getStandaloneFees(organizationId, dateRange, parentSku, sellerSkus, filters.marketplace),
+        getAttachedRefundsByRefundDate(organizationId, dateRange, filters.marketplace),
+        getStandaloneRefunds(organizationId, dateRange, parentSku, sellerSkus, filters.marketplace)
+      ])
+    : await Promise.all([
+        Promise.all([
+      getItemLevelFees(organizationId, itemIds, dateRange),
+          getOrderLevelFees(organizationId, orderIds, dateRange)
+        ]).then(([itemLevelFees, orderLevelFees]) => [...itemLevelFees, ...orderLevelFees]),
+        getStandaloneFees(organizationId, dateRange, parentSku, sellerSkus, filters.marketplace),
+        Promise.all([
+      getItemLevelRefunds(organizationId, itemIds, dateRange),
+          getOrderLevelRefunds(organizationId, orderIds, dateRange)
+        ]).then(([itemLevelRefunds, orderLevelRefunds]) => [
+          ...itemLevelRefunds,
+          ...orderLevelRefunds
+        ]),
       getStandaloneRefunds(organizationId, dateRange, parentSku, sellerSkus, filters.marketplace)
     ]);
+  options.timer?.mark("adjustments");
+  const itemLevelFees = attachedFees.filter(
+    (fee) => fee.orderItemId && itemIdSet.has(fee.orderItemId)
+  );
+  const orderLevelFees = attachedFees.filter(
+    (fee) => !fee.orderItemId && fee.orderId && orderIdSet.has(fee.orderId)
+  );
+  const itemLevelRefunds = attachedRefunds.filter(
+    (refund) => refund.orderItemId && itemIdSet.has(refund.orderItemId)
+  );
+  const orderLevelRefunds = attachedRefunds.filter(
+    (refund) => !refund.orderItemId && refund.orderId && orderIdSet.has(refund.orderId)
+  );
+  const itemLevelFeesByItemId = groupRowsByOrderItemId(itemLevelFees);
+  const itemLevelRefundsByItemId = groupRowsByOrderItemId(itemLevelRefunds);
+  options.timer?.mark("adjustment-groups");
 
   await addCatalogParentSkus(
     organizationId,
     parentSkuBySellerSku,
     uniqueStrings([
-      ...items.map((item) => item.sellerSku),
+      ...items
+        .filter((item) => !parentSkuBySellerSku.get(item.sellerSku))
+        .map((item) => item.sellerSku),
       ...standaloneFees.map((fee) => fee.sellerSku),
       ...standaloneRefunds.map((refund) => refund.sellerSku)
     ]),
     filters.marketplace
   );
+  options.timer?.mark("catalog-parents");
 
-  const effectiveCogsService = new EffectiveCogsService(costRecords);
-  const effectiveCogsByLineId = effectiveCogsService.getEffectiveCogsForOrderLines(
+  const effectiveCogsByLineId = new EffectiveCogsService(costRecords).getEffectiveCogsForOrderLines(
     items.map((item) => ({
       id: item.id,
       marketplace: item.marketplace,
@@ -556,9 +723,12 @@ async function getProfitLineSelection(
       cogsUnit: item.cogsUnit
     }))
   );
+  options.timer?.mark("effective-cogs");
 
   const lines: ProfitLineInput[] = items.map((item) => {
     const effectiveCogs = effectiveCogsByLineId.get(item.id);
+    const itemFees = itemLevelFeesByItemId.get(item.id) ?? [];
+    const itemRefunds = itemLevelRefundsByItemId.get(item.id) ?? [];
 
     const currentParentSku = parentSkuBySellerSku.get(item.sellerSku) ?? item.parentSku;
 
@@ -573,7 +743,7 @@ async function getProfitLineSelection(
       department: getLineDepartment(item),
       externalLineId: item.externalLineId,
       orderDate: item.order.orderDate,
-      orderCount: getImportedOrderCount(item.fees),
+      orderCount: getImportedOrderCount(itemFees),
       quantity: item.quantity,
       itemRevenue: toNumber(item.itemRevenue),
       shippingRevenue: toNumber(item.shippingRevenue),
@@ -582,7 +752,7 @@ async function getProfitLineSelection(
       salesRefunds: getSupportedLineSalesRefundsFromFees(item),
       cogsTotal: effectiveCogs?.cogsTotal ?? 0,
       missingCogs: effectiveCogs?.missingCogs ?? true,
-      fees: item.fees.map((fee) => ({
+      fees: itemFees.map((fee) => ({
         marketplace: fee.marketplace,
         sellerSku: fee.sellerSku ?? item.sellerSku,
         parentSku: currentParentSku,
@@ -592,7 +762,7 @@ async function getProfitLineSelection(
         metadata: toRecord(fee.metadata)
       })),
       refunds: [
-        ...item.refunds.map((refund) => ({
+        ...itemRefunds.map((refund) => ({
           marketplace: refund.marketplace,
           sellerSku: refund.sellerSku ?? item.sellerSku,
           parentSku: currentParentSku,
@@ -603,10 +773,12 @@ async function getProfitLineSelection(
       ]
     };
   });
+  options.timer?.mark("map-lines");
 
   const lineRefsByOrderId = buildLineRefsByOrderId(items, lines);
   applyOrderLevelFeesToLines(orderLevelFees, lineRefsByOrderId);
   applyOrderLevelRefundsToLines(orderLevelRefunds, lineRefsByOrderId);
+  options.timer?.mark("order-level-adjustments");
 
   const filteredLines = filterProfitLines(lines, filters);
   const filteredSellerSkus = new Set(filteredLines.map((line) => line.sellerSku));
@@ -624,6 +796,21 @@ async function getProfitLineSelection(
     options.sourceMode === "daily"
       ? { lines: filteredLines, suppressedDetailLines: [] }
       : selectDashboardProfitLines(filteredLines, dateRange);
+  options.timer?.mark("filters");
+  options.timer?.finish({
+    mode: options.sourceMode ?? "dashboard",
+    marketplace: filters.marketplace,
+    parentSku,
+    sellerSkus: sellerSkus.length,
+    items: items.length,
+    costRecords: costRecords.length,
+    attachedFees: attachedFees.length,
+    standaloneFees: standaloneFees.length,
+    attachedRefunds: attachedRefunds.length,
+    standaloneRefunds: standaloneRefunds.length,
+    lines: selectedLines.lines.length,
+    suppressedDetailLines: selectedLines.suppressedDetailLines.length
+  });
 
   return {
     ...selectedLines,
@@ -634,6 +821,107 @@ async function getProfitLineSelection(
       mapStandaloneRefundToProfitRefund(refund, parentSkuBySellerSku, parentSku)
     )
   };
+}
+
+type LeanProfitLineItemRow = {
+  id: string;
+  orderId: string;
+  marketplace: string;
+  sellerSku: string;
+  parentSku: string | null;
+  externalLineId: string | null;
+  quantity: number;
+  unitPrice: unknown;
+  itemRevenue: unknown;
+  shippingRevenue: unknown;
+  taxCollected: unknown;
+  discountAmount: unknown;
+  cogsUnit: unknown | null;
+  cogsTotal: unknown;
+  poOrderStatus: string | null;
+  poFulfillmentType: string | null;
+  orderExternalOrderId: string;
+  orderDate: Date;
+  orderStatus: string | null;
+  productBrand: string | null;
+};
+
+async function getLeanProfitLineItems(
+  organizationId: string,
+  dateRange?: PnlDateRange,
+  marketplace?: string
+): Promise<ProfitLineItem[]> {
+  const where: Prisma.Sql[] = [
+    Prisma.sql`soi."organizationId" = ${organizationId}`,
+    Prisma.sql`(so."importId" IS NULL OR si."status" IN ('IMPORTED', 'NEEDS_REVIEW'))`
+  ];
+
+  if (marketplace) {
+    where.push(Prisma.sql`soi."marketplace" = ${marketplace}`);
+  }
+
+  if (dateRange?.from) {
+    where.push(Prisma.sql`so."orderDate" >= ${dateRange.from}`);
+  }
+
+  if (dateRange?.to) {
+    where.push(Prisma.sql`so."orderDate" <= ${dateRange.to}`);
+  }
+
+  const rows = await prisma.$queryRaw<LeanProfitLineItemRow[]>(Prisma.sql`
+    SELECT
+      soi."id",
+      soi."orderId",
+      soi."marketplace",
+      soi."sellerSku",
+      soi."parentSku",
+      soi."externalLineId",
+      soi."quantity",
+      soi."unitPrice",
+      soi."itemRevenue",
+      soi."shippingRevenue",
+      soi."taxCollected",
+      soi."discountAmount",
+      soi."cogsUnit",
+      soi."cogsTotal",
+      soi."poOrderStatus",
+      soi."poFulfillmentType",
+      so."externalOrderId" AS "orderExternalOrderId",
+      so."orderDate",
+      so."status" AS "orderStatus",
+      p."brand" AS "productBrand"
+    FROM "SalesOrderItem" soi
+    INNER JOIN "SalesOrder" so ON so."id" = soi."orderId"
+    LEFT JOIN "SalesImport" si ON si."id" = so."importId"
+    LEFT JOIN "Product" p ON p."id" = soi."productId"
+    WHERE ${Prisma.join(where, " AND ")}
+    ORDER BY soi."marketplace" ASC, soi."sellerSku" ASC
+  `);
+
+  return rows.map((row) => ({
+    id: row.id,
+    orderId: row.orderId,
+    marketplace: row.marketplace,
+    sellerSku: row.sellerSku,
+    parentSku: row.parentSku,
+    externalLineId: row.externalLineId,
+    quantity: row.quantity,
+    unitPrice: row.unitPrice,
+    itemRevenue: row.itemRevenue,
+    shippingRevenue: row.shippingRevenue,
+    taxCollected: row.taxCollected,
+    discountAmount: row.discountAmount,
+    cogsUnit: row.cogsUnit,
+    cogsTotal: row.cogsTotal,
+    poOrderStatus: row.poOrderStatus,
+    poFulfillmentType: row.poFulfillmentType,
+    order: {
+      externalOrderId: row.orderExternalOrderId,
+      orderDate: row.orderDate,
+      status: row.orderStatus
+    },
+    product: row.productBrand ? { brand: row.productBrand } : null
+  }));
 }
 
 async function getSettlementPayoutHistory(
@@ -853,6 +1141,7 @@ function createEmptyDisplayProfitRow({
     marketplaceFees: 0,
     commissionFees: 0,
     fulfillmentFees: 0,
+    sellerFulfilledShippingCost: 0,
     shippingFees: 0,
     storageFees: 0,
     returnFees: 0,
@@ -862,6 +1151,7 @@ function createEmptyDisplayProfitRow({
     semAdvertisingCost: 0,
     walmartConnectAdvertisingCost: 0,
     advertisingCost: 0,
+    tacosPercent: 0,
     cogs: 0,
     grossProfit: 0,
     grossMarginPercent: 0,
@@ -977,6 +1267,14 @@ function filterProfitLines(
   });
 }
 
+function shouldUseDateScopedAttachedAdjustments(
+  parentSku: string | undefined,
+  sellerSkus: string[],
+  filters: Pick<SkuPnlFilters, "brand" | "department">
+) {
+  return !parentSku && !sellerSkus.length && !filters.brand && !filters.department;
+}
+
 function filterStandaloneRowsByLineFilters<T extends { sellerSku: string | null; marketplace: string }>(
   rows: T[],
   filteredSellerSkus: Set<string>,
@@ -1078,6 +1376,7 @@ function calculateParentPeriodTiles(
         marketplaceFees: displaySummary.marketplaceFees,
         commissionFees: displaySummary.commissionFees,
         fulfillmentFees: displaySummary.fulfillmentFees,
+        sellerFulfilledShippingCost: displaySummary.sellerFulfilledShippingCost,
         shippingFees: displaySummary.shippingFees,
         storageFees: displaySummary.storageFees,
         returnFees: displaySummary.returnFees,
@@ -1088,6 +1387,7 @@ function calculateParentPeriodTiles(
         semAdvertisingCost: marketplaceSummary.semAdvertisingCost,
         walmartConnectAdvertisingCost: displaySummary.walmartConnectAdvertisingCost,
         advertisingCost: displaySummary.advertisingCost,
+        tacosPercent: displaySummary.tacosPercent,
         cogs: displaySummary.cogs,
         grossProfit: displaySummary.grossProfit,
         grossProfitChangePercent: null,
@@ -1169,6 +1469,7 @@ function calculateParentPeriodTiles(
       marketplaceFees: displaySummary.marketplaceFees,
       commissionFees: displaySummary.commissionFees,
       fulfillmentFees: displaySummary.fulfillmentFees,
+      sellerFulfilledShippingCost: displaySummary.sellerFulfilledShippingCost,
       shippingFees: displaySummary.shippingFees,
       storageFees: displaySummary.storageFees,
       returnFees: displaySummary.returnFees,
@@ -1179,6 +1480,7 @@ function calculateParentPeriodTiles(
       semAdvertisingCost: marketplaceSummary.semAdvertisingCost,
       walmartConnectAdvertisingCost: displaySummary.walmartConnectAdvertisingCost,
       advertisingCost: displaySummary.advertisingCost,
+      tacosPercent: displaySummary.tacosPercent,
       cogs: displaySummary.cogs,
       grossProfit: displaySummary.grossProfit,
       grossProfitChangePercent: null,
@@ -1268,6 +1570,7 @@ function calculateParentMonthlyComparisonRows(
         marketplaceFees: displaySummary.marketplaceFees,
         commissionFees: displaySummary.commissionFees,
         fulfillmentFees: displaySummary.fulfillmentFees,
+        sellerFulfilledShippingCost: displaySummary.sellerFulfilledShippingCost,
         shippingFees: displaySummary.shippingFees,
         storageFees: displaySummary.storageFees,
         returnFees: displaySummary.returnFees,
@@ -1278,6 +1581,7 @@ function calculateParentMonthlyComparisonRows(
         semAdvertisingCost: marketplaceSummary.semAdvertisingCost,
         walmartConnectAdvertisingCost: displaySummary.walmartConnectAdvertisingCost,
         advertisingCost: displaySummary.advertisingCost,
+        tacosPercent: displaySummary.tacosPercent,
         cogs: displaySummary.cogs,
         grossProfit: displaySummary.grossProfit,
         netProfit: displaySummary.netProfit,
@@ -1344,6 +1648,7 @@ function calculateParentMonthlyComparisonRows(
       marketplaceFees: displaySummary.marketplaceFees,
       commissionFees: displaySummary.commissionFees,
       fulfillmentFees: displaySummary.fulfillmentFees,
+      sellerFulfilledShippingCost: displaySummary.sellerFulfilledShippingCost,
       shippingFees: displaySummary.shippingFees,
       storageFees: displaySummary.storageFees,
       returnFees: displaySummary.returnFees,
@@ -1354,6 +1659,7 @@ function calculateParentMonthlyComparisonRows(
       semAdvertisingCost: marketplaceSummary.semAdvertisingCost,
       walmartConnectAdvertisingCost: displaySummary.walmartConnectAdvertisingCost,
       advertisingCost: displaySummary.advertisingCost,
+      tacosPercent: displaySummary.tacosPercent,
       cogs: displaySummary.cogs,
       grossProfit: displaySummary.grossProfit,
       netProfit: displaySummary.netProfit,
@@ -1474,7 +1780,10 @@ function buildDataQualityLabels(
 
 function getOtherWalmartFeesAndAdjustments(summary: ReturnType<typeof summarizeProfit>) {
   return roundMoney(
-    summary.marketplaceFees - summary.commissionFees - summary.fulfillmentFees
+    summary.marketplaceFees -
+      summary.commissionFees -
+      summary.fulfillmentFees -
+      summary.sellerFulfilledShippingCost
   );
 }
 
@@ -1658,13 +1967,15 @@ function calculateOrderCount(lines: ProfitLineInput[]) {
 
 async function getOrderLevelFees(
   organizationId: string,
-  orderIds: string[]
+  orderIds: string[],
+  dateRange?: PnlDateRange
 ): Promise<MarketplaceFee[]> {
   if (!orderIds.length) {
     return [];
   }
 
   const fees: MarketplaceFee[] = [];
+  const postedAt = buildDateRangeWhere(dateRange);
 
   for (const orderIdChunk of chunkArray(orderIds, PRISMA_IN_FILTER_CHUNK_SIZE)) {
     fees.push(
@@ -1672,7 +1983,82 @@ async function getOrderLevelFees(
         where: {
           organizationId,
           orderId: { in: orderIdChunk },
-          orderItemId: null
+          orderItemId: null,
+          ...(postedAt ? { postedAt } : {})
+        }
+      }))
+    );
+  }
+
+  return fees;
+}
+
+async function getAttachedFeesByPostedDate(
+  organizationId: string,
+  dateRange?: PnlDateRange,
+  marketplace?: string
+): Promise<PnlMarketplaceFee[]> {
+  const where: Prisma.Sql[] = [
+    Prisma.sql`"organizationId" = ${organizationId}`,
+    Prisma.sql`("orderId" IS NOT NULL OR "orderItemId" IS NOT NULL)`
+  ];
+
+  if (marketplace) {
+    where.push(Prisma.sql`"marketplace" = ${marketplace}`);
+  }
+
+  if (dateRange?.from) {
+    where.push(Prisma.sql`"postedAt" >= ${dateRange.from}`);
+  }
+
+  if (dateRange?.to) {
+    where.push(Prisma.sql`"postedAt" <= ${dateRange.to}`);
+  }
+
+  return prisma.$queryRaw<PnlMarketplaceFee[]>(Prisma.sql`
+    SELECT
+      "marketplace",
+      "sellerSku",
+      "feeType",
+      "feeAmount",
+      "postedAt",
+      "metadata",
+      "orderId",
+      "orderItemId"
+    FROM "MarketplaceFee"
+    WHERE ${Prisma.join(where, " AND ")}
+  `);
+}
+
+async function getItemLevelFees(
+  organizationId: string,
+  orderItemIds: string[],
+  dateRange?: PnlDateRange
+): Promise<PnlMarketplaceFee[]> {
+  if (!orderItemIds.length) {
+    return [];
+  }
+
+  const fees: PnlMarketplaceFee[] = [];
+  const postedAt = buildDateRangeWhere(dateRange);
+
+  for (const orderItemIdChunk of chunkArray(orderItemIds, PRISMA_IN_FILTER_CHUNK_SIZE)) {
+    fees.push(
+      ...(await prisma.marketplaceFee.findMany({
+        where: {
+          organizationId,
+          orderItemId: { in: orderItemIdChunk },
+          ...(postedAt ? { postedAt } : {})
+        },
+        select: {
+          marketplace: true,
+          sellerSku: true,
+          feeType: true,
+          feeAmount: true,
+          postedAt: true,
+          metadata: true,
+          orderId: true,
+          orderItemId: true
         }
       }))
     );
@@ -1683,17 +2069,23 @@ async function getOrderLevelFees(
 
 async function getStandaloneFees(
   organizationId: string,
-  _dateRange?: PnlDateRange,
+  dateRange?: PnlDateRange,
   parentSku?: string,
   sellerSkus: string[] = [],
   marketplace?: string
 ): Promise<MarketplaceFee[]> {
+  const postedAt = buildDateRangeWhere(dateRange);
+  const dateOrManualPeriodWhere = postedAt
+    ? { OR: [{ postedAt }, { feeType: SELLER_FULFILLED_SHIPPING_FEE_TYPE }] }
+    : {};
+
   return prisma.marketplaceFee.findMany({
     where: {
       organizationId,
       ...(marketplace ? { marketplace } : {}),
       orderId: null,
       orderItemId: null,
+      ...dateOrManualPeriodWhere,
       ...buildParentSkuAdjustmentWhere(parentSku, sellerSkus)
     }
   });
@@ -1701,13 +2093,15 @@ async function getStandaloneFees(
 
 async function getOrderLevelRefunds(
   organizationId: string,
-  orderIds: string[]
+  orderIds: string[],
+  dateRange?: PnlDateRange
 ): Promise<Refund[]> {
   if (!orderIds.length) {
     return [];
   }
 
   const refunds: Refund[] = [];
+  const refundDate = buildDateRangeWhere(dateRange);
 
   for (const orderIdChunk of chunkArray(orderIds, PRISMA_IN_FILTER_CHUNK_SIZE)) {
     refunds.push(
@@ -1715,7 +2109,80 @@ async function getOrderLevelRefunds(
         where: {
           organizationId,
           orderId: { in: orderIdChunk },
-          orderItemId: null
+          orderItemId: null,
+          ...(refundDate ? { refundDate } : {})
+        }
+      }))
+    );
+  }
+
+  return refunds;
+}
+
+async function getAttachedRefundsByRefundDate(
+  organizationId: string,
+  dateRange?: PnlDateRange,
+  marketplace?: string
+): Promise<PnlRefund[]> {
+  const where: Prisma.Sql[] = [
+    Prisma.sql`"organizationId" = ${organizationId}`,
+    Prisma.sql`("orderId" IS NOT NULL OR "orderItemId" IS NOT NULL)`
+  ];
+
+  if (marketplace) {
+    where.push(Prisma.sql`"marketplace" = ${marketplace}`);
+  }
+
+  if (dateRange?.from) {
+    where.push(Prisma.sql`"refundDate" >= ${dateRange.from}`);
+  }
+
+  if (dateRange?.to) {
+    where.push(Prisma.sql`"refundDate" <= ${dateRange.to}`);
+  }
+
+  return prisma.$queryRaw<PnlRefund[]>(Prisma.sql`
+    SELECT
+      "marketplace",
+      "sellerSku",
+      "refundAmount",
+      "refundDate",
+      "metadata",
+      "orderId",
+      "orderItemId"
+    FROM "Refund"
+    WHERE ${Prisma.join(where, " AND ")}
+  `);
+}
+
+async function getItemLevelRefunds(
+  organizationId: string,
+  orderItemIds: string[],
+  dateRange?: PnlDateRange
+): Promise<PnlRefund[]> {
+  if (!orderItemIds.length) {
+    return [];
+  }
+
+  const refunds: PnlRefund[] = [];
+  const refundDate = buildDateRangeWhere(dateRange);
+
+  for (const orderItemIdChunk of chunkArray(orderItemIds, PRISMA_IN_FILTER_CHUNK_SIZE)) {
+    refunds.push(
+      ...(await prisma.refund.findMany({
+        where: {
+          organizationId,
+          orderItemId: { in: orderItemIdChunk },
+          ...(refundDate ? { refundDate } : {})
+        },
+        select: {
+          marketplace: true,
+          sellerSku: true,
+          refundAmount: true,
+          refundDate: true,
+          metadata: true,
+          orderId: true,
+          orderItemId: true
         }
       }))
     );
@@ -1726,20 +2193,37 @@ async function getOrderLevelRefunds(
 
 async function getStandaloneRefunds(
   organizationId: string,
-  _dateRange?: PnlDateRange,
+  dateRange?: PnlDateRange,
   parentSku?: string,
   sellerSkus: string[] = [],
   marketplace?: string
 ): Promise<Refund[]> {
+  const refundDate = buildDateRangeWhere(dateRange);
+
   return prisma.refund.findMany({
     where: {
       organizationId,
       ...(marketplace ? { marketplace } : {}),
       orderId: null,
       orderItemId: null,
+      ...(refundDate ? { refundDate } : {}),
       ...buildParentSkuAdjustmentWhere(parentSku, sellerSkus)
     }
   });
+}
+
+function groupRowsByOrderItemId<T extends { orderItemId: string | null }>(rows: T[]) {
+  const grouped = new Map<string, T[]>();
+
+  for (const row of rows) {
+    if (!row.orderItemId) {
+      continue;
+    }
+
+    grouped.set(row.orderItemId, [...(grouped.get(row.orderItemId) ?? []), row]);
+  }
+
+  return grouped;
 }
 
 function buildLineRefsByOrderId(
@@ -1764,7 +2248,7 @@ function buildLineRefsByOrderId(
 }
 
 function applyOrderLevelFeesToLines(
-  fees: MarketplaceFee[],
+  fees: PnlMarketplaceFee[],
   lineRefsByOrderId: Map<string, LineAllocationRef[]>
 ) {
   for (const fee of fees) {
@@ -1794,7 +2278,7 @@ function applyOrderLevelFeesToLines(
 }
 
 function applyOrderLevelRefundsToLines(
-  refunds: Refund[],
+  refunds: PnlRefund[],
   lineRefsByOrderId: Map<string, LineAllocationRef[]>
 ) {
   for (const refund of refunds) {
@@ -1992,7 +2476,7 @@ async function addCatalogParentSkus(
 }
 
 function mapStandaloneFeeToProfitFee(
-  fee: MarketplaceFee,
+  fee: PnlMarketplaceFee,
   parentSkuBySellerSku: Map<string, string | null>,
   selectedParentSku?: string
 ): ProfitFeeInput {
@@ -2010,7 +2494,7 @@ function mapStandaloneFeeToProfitFee(
 }
 
 function mapStandaloneRefundToProfitRefund(
-  refund: Refund,
+  refund: PnlRefund,
   parentSkuBySellerSku: Map<string, string | null>,
   selectedParentSku?: string
 ): ProfitRefundInput {
@@ -2030,13 +2514,16 @@ async function getAdvertisingCosts(
   organizationId: string,
   parentSku?: string,
   sellerSkus: string[] = [],
-  marketplace?: string
+  marketplace?: string,
+  dateRange?: PnlDateRange
 ): Promise<ProfitAdvertisingCostInput[]> {
+  const costDate = buildDateRangeWhere(dateRange);
   const costs = await prisma.advertisingCost.findMany({
     where: {
       organizationId,
       source: { in: PNL_ADVERTISING_SOURCES },
       ...(marketplace ? { marketplace } : {}),
+      ...(costDate ? { costDate } : {}),
       ...buildParentSkuAdvertisingWhere(parentSku, sellerSkus)
     }
   });
@@ -2220,6 +2707,71 @@ function buildDateRangeWhere(dateRange?: PnlDateRange) {
   };
 }
 
+function createPnlTimer(label: string) {
+  const startedAt = performance.now();
+  let previousAt = startedAt;
+  const marks: Array<{ label: string; ms: number; totalMs: number }> = [];
+
+  return {
+    mark(markLabel: string) {
+      if (process.env.NODE_ENV === "production") {
+        return;
+      }
+
+      const now = performance.now();
+      marks.push({
+        label: markLabel,
+        ms: Math.round(now - previousAt),
+        totalMs: Math.round(now - startedAt)
+      });
+      previousAt = now;
+    },
+    finish(details: Record<string, unknown>) {
+      if (process.env.NODE_ENV === "production") {
+        return;
+      }
+
+      const totalMs = Math.round(performance.now() - startedAt);
+      if (totalMs < 5_000) {
+        return;
+      }
+
+      console.info(
+        `[pnl-timing] ${label} ${totalMs}ms`,
+        JSON.stringify({ ...details, marks })
+      );
+    }
+  };
+}
+
+function describeDateRange(dateRange?: PnlDateRange | null) {
+  if (!dateRange?.from && !dateRange?.to) {
+    return null;
+  }
+
+  return {
+    from: dateRange.from ? dateRange.from.toISOString() : null,
+    to: dateRange.to ? dateRange.to.toISOString() : null
+  };
+}
+
+function getPnlDataLoadRange(
+  comparisonPeriod: PnlComparisonPeriod = "month",
+  dateRange?: PnlDateRange
+): Required<PnlDateRange> {
+  const periods = buildPnlPeriodRanges(comparisonPeriod, dateRange);
+  const from = periods.reduce(
+    (earliest, period) => (period.start < earliest ? period.start : earliest),
+    periods[0]?.start ?? new Date()
+  );
+  const to = periods.reduce(
+    (latest, period) => (period.end > latest ? period.end : latest),
+    periods[0]?.end ?? new Date()
+  );
+
+  return { from, to };
+}
+
 function buildParentSkuLineWhere(parentSku?: string, sellerSkus: string[] = []) {
   if (!parentSku) {
     return {};
@@ -2283,9 +2835,7 @@ function getSalesSourceFromOrderItem(item: ProfitLineItem) {
   return getPoSalesSourceFromOrderItem({
     orderStatus: item.order.status,
     poOrderStatus: getDirectPoOrderStatus(item),
-    lineMetadata: item.fees
-      .map((fee) => toRecord(fee.metadata))
-      .filter((metadata): metadata is Record<string, unknown> => Boolean(metadata))
+    lineMetadata: []
   });
 }
 
@@ -2327,11 +2877,11 @@ function getSupportedLineSalesRefundsFromFees(item: ProfitLineItem) {
 }
 
 function getLineBrand(item: ProfitLineItem) {
-  return item.product?.brand ?? firstText(item.fees.map((fee) => readMetadataText(fee.metadata, "brand")));
+  return item.product?.brand ?? null;
 }
 
-function getLineDepartment(item: ProfitLineItem) {
-  return firstText(item.fees.map((fee) => readMetadataText(fee.metadata, "department")));
+function getLineDepartment(_item: ProfitLineItem) {
+  return null;
 }
 
 function summarizeSettlementAllocation(
@@ -2404,7 +2954,10 @@ function withSettlementAllocationMetadata(
 }
 
 function isWalmartSettlementMetadata(metadata: Record<string, unknown> | undefined) {
-  return readMetadataText(metadata, "source") === "walmart_payments_new";
+  return (
+    readMetadataText(metadata, "source") === "walmart_payments_new" ||
+    isSellerFulfilledShippingMetadata(metadata)
+  );
 }
 
 function isTransactionPostedSettlementMetadata(metadata: Record<string, unknown> | undefined) {

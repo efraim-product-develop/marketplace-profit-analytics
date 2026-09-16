@@ -21,6 +21,7 @@ import {
   type RollingPnlComparisonPeriod
 } from "@/server/pnl/periods";
 import type {
+  OtherFeeCategoryBreakdownRow,
   ParentSkuFilterOption,
   ProductAttributionDiagnostics,
   PnlSalesSourceSummary,
@@ -38,6 +39,7 @@ export default async function ParentPnlPage({
   const parsed = parseParentPnlSearchParams(searchParams);
   const marketplace = getCurrentMarketplace();
   const marketplaceTitle = getCurrentMarketplaceTitleName();
+  const shouldLoadSkuRows = Boolean(parsed.filters.parentSku || parsed.selectedSku);
   const {
     rows,
     skuRows,
@@ -57,7 +59,8 @@ export default async function ParentPnlPage({
     comparisonPeriod: parsed.filters.comparisonPeriod,
     marketplace,
     parentSku: parsed.filters.parentSku,
-    selectedSku: parsed.selectedSku
+    selectedSku: parsed.selectedSku,
+    includeSkuRows: shouldLoadSkuRows
   });
   const currentQueryString = buildParentPnlQueryString(parsed.formValues, {
     ...(parsed.selectedSku ? { sku: parsed.selectedSku } : {})
@@ -135,6 +138,11 @@ export default async function ParentPnlPage({
           detail="Marketplace-level"
         />
         <KpiCard
+          label="Seller Shipping"
+          value={formatCurrency(summary.sellerFulfilledShippingCost)}
+          detail="Marketplace-level"
+        />
+        <KpiCard
           label="Other Fees"
           value={formatCurrency(attributionDiagnostics.marketplaceOnlyOtherWalmartFees)}
           detail="Marketplace-level"
@@ -165,7 +173,7 @@ export default async function ParentPnlPage({
         <div className="mb-3 flex items-center justify-between gap-4">
           <h2 className="text-base font-semibold text-ink">Parent Rollup</h2>
           <span className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-500">
-            Expand a parent to view SKUs and order history
+            {shouldLoadSkuRows ? "Expand a parent to view SKUs and order history" : "Open a parent to load SKU detail"}
           </span>
         </div>
         <ParentPnlTable
@@ -174,6 +182,7 @@ export default async function ParentPnlPage({
           rows={rows}
           selectedSku={parsed.selectedSku}
           skuRows={skuRows}
+          skuRowsLoaded={shouldLoadSkuRows}
         />
       </section>
     </>
@@ -234,13 +243,19 @@ function ParentPnlTileGrid({
               <CostLine label="Fulfillment" value={formatCurrency(tile.fulfillmentFees)} />
               <CostLine label="COGS" value={formatCurrency(tile.cogs)} />
               <CostLine
+                label="Seller shipping"
+                value={formatCurrency(tile.sellerFulfilledShippingCost)}
+              />
+              <CostLine
                 label="Walmart Connect ads"
                 value={formatCurrency(tile.walmartConnectAdvertisingCost)}
               />
               <CostLine label="SEM ads" value={formatCurrency(tile.semAdvertisingCost)} />
-              <CostLine
+              <CostLine label="TACOS" value={formatPercent(tile.tacosPercent)} />
+              <ExpandableOtherFeesLine
                 label="Other fees"
                 value={formatCurrency(tile.otherWalmartFeesAndAdjustments)}
+                breakdown={tile.otherFeeCategoryBreakdown}
               />
             </div>
 
@@ -425,25 +440,16 @@ function SalesSourceNotice({ salesSource }: { salesSource: PnlSalesSourceSummary
 }
 
 function SettlementPayoutPanel({ payouts }: { payouts: SettlementPayoutHistoryRow[] }) {
-  const totalPayout = payouts.reduce((sum, payout) => sum + payout.payoutAmount, 0);
   const latest = payouts[0];
 
   return (
     <section className="mb-6 rounded-md border border-slate-200 bg-white p-4 shadow-panel">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <div>
         <div>
           <div className="text-sm font-semibold text-ink">Settlement Payout</div>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
             Cash-flow metric from Walmart settlement reports. It is shown separately and is not included in Profit.
           </p>
-        </div>
-        <div className="rounded-md bg-slate-50 px-4 py-3 text-right">
-          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-            {payouts.length > 1 ? "Selected payout total" : "Payout amount"}
-          </div>
-          <div className="mt-1 text-xl font-semibold text-ink">
-            {formatCurrency(totalPayout)}
-          </div>
         </div>
       </div>
 
@@ -613,6 +619,59 @@ function CostLine({ label, value, muted = false }: { label: string; value: strin
         {value}
       </span>
     </div>
+  );
+}
+
+function ExpandableOtherFeesLine({
+  label,
+  value,
+  breakdown
+}: {
+  label: string;
+  value: string;
+  breakdown: OtherFeeCategoryBreakdownRow[];
+}) {
+  if (breakdown.length === 0) {
+    return <CostLine label={label} value={value} />;
+  }
+
+  return (
+    <details className="group">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm marker:hidden">
+        <span className="flex min-w-0 items-center gap-1 text-xs font-medium text-slate-500">
+          <span>{label}</span>
+          <span
+            aria-hidden="true"
+            className="text-[10px] text-slate-400 transition group-open:rotate-180"
+          >
+            v
+          </span>
+        </span>
+        <span className="font-semibold text-ink">{value}</span>
+      </summary>
+      <div className="mt-2 grid gap-1 border-t border-slate-200 pt-2">
+        {breakdown.map((line) => (
+          <div
+            key={line.category}
+            className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 text-[11px] leading-4"
+          >
+            <span className="min-w-0 truncate font-medium text-slate-500">
+              {line.categoryName}
+            </span>
+            <span className="font-semibold text-slate-700">
+              {formatCurrency(line.netAmount)}
+            </span>
+            <span className="text-slate-400">
+              {formatNumber(line.transactionCount)} transactions
+            </span>
+            <span className="text-right text-slate-400">
+              Charges {formatCurrency(line.charges)}
+              {line.credits > 0 ? ` / Credits ${formatCurrency(line.credits)}` : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 

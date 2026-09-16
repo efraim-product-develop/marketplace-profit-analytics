@@ -243,6 +243,10 @@ function readCurrentWalmartEnvValues() {
 }
 
 async function updateLocalEnvFile(values: Record<string, string>) {
+  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+    return;
+  }
+
   const envPath = join(process.cwd(), ".env");
   let existing = "";
 

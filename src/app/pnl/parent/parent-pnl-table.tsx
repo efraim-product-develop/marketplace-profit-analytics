@@ -77,6 +77,11 @@ const parentColumns: ColumnDef<ProfitRow>[] = [
     cell: ({ row }) => formatCurrency(row.original.walmartConnectAdvertisingCost)
   },
   {
+    accessorKey: "tacosPercent",
+    header: "TACOS",
+    cell: ({ row }) => formatPercent(row.original.tacosPercent)
+  },
+  {
     accessorKey: "netProfit",
     header: "Profit",
     cell: ({ row }) => formatCurrency(row.original.netProfit)
@@ -115,6 +120,7 @@ const parentColumnLabels: Record<string, string> = {
   cogs: "COGS",
   missingCogsUnits: "COGS Status",
   walmartConnectAdvertisingCost: "Walmart Connect Ads",
+  tacosPercent: "TACOS",
   netProfit: "Profit",
   netMarginPercent: "Profit Margin",
   profitPerUnit: "Profit / Unit",
@@ -126,13 +132,15 @@ export function ParentPnlTable({
   orderHistoryRows,
   rows,
   selectedSku,
-  skuRows
+  skuRows,
+  skuRowsLoaded
 }: {
   currentQueryString: string;
   orderHistoryRows: SkuPnlOrderDrilldownRow[];
   rows: ProfitRow[];
   selectedSku: string;
   skuRows: ProfitRow[];
+  skuRowsLoaded: boolean;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useState<ParentColumnVisibilityState>({});
@@ -304,29 +312,41 @@ export function ParentPnlTable({
                 const parentKey = getParentKey(row.original);
                 const children = skuRowsByParent.get(parentKey) ?? [];
                 const isExpanded = expandedParents.has(parentKey);
+                const canExpand = skuRowsLoaded;
 
                 return (
                   <Fragment key={row.id}>
                     <tr className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="px-3 py-3 align-middle">
-                        <button
-                          type="button"
-                          className={cn(
-                            "flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 transition hover:border-teal-600 hover:text-teal-700",
-                            isExpanded && "border-teal-600 bg-teal-50 text-teal-700"
-                          )}
-                          aria-label={`${isExpanded ? "Hide" : "Show"} SKUs for ${
-                            row.original.parentSku ?? "Unassigned parent"
-                          }`}
-                          aria-expanded={isExpanded}
-                          onClick={() => toggleParent(parentKey)}
-                        >
-                          {isExpanded ? (
-                            <ChevronDown aria-hidden className="h-4 w-4" />
-                          ) : (
+                        {canExpand ? (
+                          <button
+                            type="button"
+                            className={cn(
+                              "flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 transition hover:border-teal-600 hover:text-teal-700",
+                              isExpanded && "border-teal-600 bg-teal-50 text-teal-700"
+                            )}
+                            aria-label={`${isExpanded ? "Hide" : "Show"} SKUs for ${
+                              row.original.parentSku ?? "Unassigned parent"
+                            }`}
+                            aria-expanded={isExpanded}
+                            onClick={() => toggleParent(parentKey)}
+                          >
+                            {isExpanded ? (
+                              <ChevronDown aria-hidden className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight aria-hidden className="h-4 w-4" />
+                            )}
+                          </button>
+                        ) : (
+                          <a
+                            className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-600 transition hover:border-teal-600 hover:text-teal-700"
+                            href={buildParentHref(currentQueryString, row.original.parentSku)}
+                            aria-label={`Load SKUs for ${row.original.parentSku ?? "Unassigned parent"}`}
+                            title="Load SKU details"
+                          >
                             <ChevronRight aria-hidden className="h-4 w-4" />
-                          )}
-                        </button>
+                          </a>
+                        )}
                       </td>
                       {row.getVisibleCells().map((cell) => (
                         <td key={cell.id} className="px-4 py-3 align-middle text-slate-700">
@@ -415,6 +435,8 @@ function renderSkuChildCell(
       return <CogsStatusBadge missingUnits={row.missingCogsUnits} />;
     case "walmartConnectAdvertisingCost":
       return formatCurrency(row.walmartConnectAdvertisingCost);
+    case "tacosPercent":
+      return formatPercent(row.tacosPercent);
     case "netProfit":
       return <span className="font-semibold text-slate-800">{formatCurrency(row.netProfit)}</span>;
     case "netMarginPercent":
@@ -581,6 +603,17 @@ function CogsStatusBadge({ missingUnits }: { missingUnits: number }) {
 function buildOrderHref(currentQueryString: string, sellerSku: string) {
   const params = new URLSearchParams(currentQueryString);
   params.set("sku", sellerSku);
+  return `/pnl/parent?${params.toString()}`;
+}
+
+function buildParentHref(currentQueryString: string, parentSku?: string | null) {
+  const params = new URLSearchParams(currentQueryString);
+  params.delete("sku");
+  if (parentSku) {
+    params.set("parent", parentSku);
+  } else {
+    params.delete("parent");
+  }
   return `/pnl/parent?${params.toString()}`;
 }
 

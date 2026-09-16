@@ -7,6 +7,7 @@ import type {
   ProfitRefundInput,
   ProfitRow
 } from "./types";
+import { isSellerFulfilledShippingFee } from "./seller-fulfilled-shipping-types.ts";
 
 type GroupBy = "sellerSku" | "parentSku";
 const SEM_AD_SOURCES = new Set(["walmart_seller_center_sem", "seller_center_sem"]);
@@ -98,6 +99,7 @@ export function summarizeProfit(rows: ProfitRow[]) {
       total.marketplaceFees += row.marketplaceFees;
       total.commissionFees += row.commissionFees;
       total.fulfillmentFees += row.fulfillmentFees;
+      total.sellerFulfilledShippingCost += row.sellerFulfilledShippingCost;
       total.shippingFees += row.shippingFees;
       total.storageFees += row.storageFees;
       total.returnFees += row.returnFees;
@@ -110,6 +112,7 @@ export function summarizeProfit(rows: ProfitRow[]) {
       total.semAdvertisingCost += row.semAdvertisingCost;
       total.walmartConnectAdvertisingCost += row.walmartConnectAdvertisingCost;
       total.advertisingCost += row.advertisingCost;
+      total.tacosPercent += row.tacosPercent;
       total.cogs += row.cogs;
       total.grossProfit += row.grossProfit;
       total.grossProfitPerUnit += row.grossProfitPerUnit;
@@ -131,6 +134,7 @@ export function summarizeProfit(rows: ProfitRow[]) {
       marketplaceFees: 0,
       commissionFees: 0,
       fulfillmentFees: 0,
+      sellerFulfilledShippingCost: 0,
       shippingFees: 0,
       storageFees: 0,
       returnFees: 0,
@@ -140,6 +144,7 @@ export function summarizeProfit(rows: ProfitRow[]) {
       semAdvertisingCost: 0,
       walmartConnectAdvertisingCost: 0,
       advertisingCost: 0,
+      tacosPercent: 0,
       cogs: 0,
       grossProfit: 0,
       grossMarginPercent: 0,
@@ -157,6 +162,10 @@ export function summarizeProfit(rows: ProfitRow[]) {
   summary.grossProfit = summary.netRevenue - summary.marketplaceFees - summary.cogs;
   summary.contributionProfit = summary.grossProfit - summary.advertisingCost;
   summary.netProfit = summary.contributionProfit;
+  summary.tacosPercent =
+    summary.netRevenue === 0
+      ? 0
+      : (summary.advertisingCost / summary.netRevenue) * 100;
   summary.grossMarginPercent =
     summary.netRevenue === 0
       ? 0
@@ -290,6 +299,7 @@ function createEmptyProfitRow(key: ProfitGroupKey): ProfitRow {
     marketplaceFees: 0,
     commissionFees: 0,
     fulfillmentFees: 0,
+    sellerFulfilledShippingCost: 0,
     shippingFees: 0,
     storageFees: 0,
     returnFees: 0,
@@ -299,6 +309,7 @@ function createEmptyProfitRow(key: ProfitGroupKey): ProfitRow {
     semAdvertisingCost: 0,
     walmartConnectAdvertisingCost: 0,
     advertisingCost: 0,
+    tacosPercent: 0,
     cogs: 0,
     grossProfit: 0,
     grossMarginPercent: 0,
@@ -317,6 +328,8 @@ function recalculateRowProfit(row: ProfitRow) {
   row.grossProfit = row.netRevenue - row.marketplaceFees - row.cogs;
   row.netProfit = row.grossProfit - row.advertisingCost;
   row.contributionProfit = row.netProfit;
+  row.tacosPercent =
+    row.netRevenue === 0 ? 0 : (row.advertisingCost / row.netRevenue) * 100;
   row.grossMarginPercent =
     row.netRevenue === 0 ? 0 : (row.grossProfit / row.netRevenue) * 100;
   row.grossProfitPerUnit = row.quantity === 0 ? 0 : row.grossProfit / row.quantity;
@@ -352,6 +365,12 @@ function applyFee(row: ProfitRow, fee: ProfitFeeInput) {
   const feeAmount = getFeeExpenseAmount(fee);
 
   row.marketplaceFees += feeAmount;
+
+  if (isSellerFulfilledShippingFee(fee.feeType, fee.metadata)) {
+    row.sellerFulfilledShippingCost += feeAmount;
+    row.shippingFees += feeAmount;
+    return;
+  }
 
   switch (getFeeCategory(fee.feeType)) {
     case "commission":

@@ -6,6 +6,7 @@ import type { Route } from "next";
 import {
   Boxes,
   FileSpreadsheet,
+  LogOut,
   type LucideIcon,
   Plug,
   Settings,
@@ -44,6 +45,10 @@ export function AppShell({
 }) {
   const pathname = usePathname();
 
+  if (pathname === "/login" || pathname.startsWith("/login/")) {
+    return <>{children}</>;
+  }
+
   return (
     <div className="min-h-screen bg-mist text-ink">
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 border-r border-slate-200 bg-white lg:block">
@@ -74,6 +79,15 @@ export function AppShell({
               );
             })}
           </nav>
+          <div className="border-t border-slate-200 p-4">
+            <Link
+              href="/logout"
+              className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-ink"
+            >
+              <LogOut aria-hidden className="h-4 w-4" />
+              Sign out
+            </Link>
+          </div>
         </div>
       </aside>
 
@@ -85,6 +99,14 @@ export function AppShell({
               marketplaces={marketplaces}
               selectedMarketplace={selectedMarketplace}
             />
+            <Link
+              href="/logout"
+              aria-label="Sign out"
+              title="Sign out"
+              className="grid h-10 w-10 place-items-center rounded-md border border-slate-200 bg-white text-slate-600"
+            >
+              <LogOut aria-hidden className="h-4 w-4" />
+            </Link>
           </div>
           <nav className="mt-3 flex gap-2 overflow-x-auto pb-1">
             {navigation.map((item) => {
@@ -108,11 +130,18 @@ export function AppShell({
             })}
           </nav>
         </header>
-        <header className="sticky top-0 z-10 hidden border-b border-slate-200 bg-white/95 px-6 py-3 backdrop-blur lg:flex lg:justify-end">
+        <header className="sticky top-0 z-10 hidden border-b border-slate-200 bg-white/95 px-6 py-3 backdrop-blur lg:flex lg:justify-end lg:gap-3">
           <MarketplaceSelector
             marketplaces={marketplaces}
             selectedMarketplace={selectedMarketplace}
           />
+          <Link
+            href="/logout"
+            className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-ink"
+          >
+            <LogOut aria-hidden className="h-4 w-4" />
+            Sign out
+          </Link>
         </header>
         <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{children}</main>
       </div>

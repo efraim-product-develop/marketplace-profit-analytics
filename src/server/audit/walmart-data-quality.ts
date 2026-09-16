@@ -194,9 +194,25 @@ export type DateCoverage = {
 };
 
 type AuditOrderItem = Prisma.SalesOrderItemGetPayload<{
-  include: {
-    order: true;
-    fees: true;
+  select: {
+    marketplace: true;
+    orderId: true;
+    sellerSku: true;
+    parentSku: true;
+    quantity: true;
+    itemRevenue: true;
+    shippingRevenue: true;
+    discountAmount: true;
+    taxCollected: true;
+    cogsTotal: true;
+    poOrderStatus: true;
+    poFulfillmentType: true;
+    order: {
+      select: {
+        orderDate: true;
+        status: true;
+      };
+    };
   };
 }>;
 
@@ -238,7 +254,26 @@ export async function getWalmartDataQualityAudit({
         marketplace,
         order: { orderDate: { gte: normalizedRange.from, lte: normalizedRange.to } }
       },
-      include: { order: true, fees: true }
+      select: {
+        marketplace: true,
+        orderId: true,
+        sellerSku: true,
+        parentSku: true,
+        quantity: true,
+        itemRevenue: true,
+        shippingRevenue: true,
+        discountAmount: true,
+        taxCollected: true,
+        cogsTotal: true,
+        poOrderStatus: true,
+        poFulfillmentType: true,
+        order: {
+          select: {
+            orderDate: true,
+            status: true
+          }
+        }
+      }
     }),
     prisma.salesOrder.findMany({
       where: { organizationId, marketplace },
@@ -1094,9 +1129,7 @@ function getSalesSourceFromAuditItem(item: AuditOrderItem) {
   return getPoSalesSourceFromOrderItem({
     orderStatus: item.order.status,
     poOrderStatus: getDirectPoOrderStatus(item),
-    lineMetadata: item.fees
-      .map((fee) => toRecord(fee.metadata))
-      .filter((metadata): metadata is Record<string, unknown> => Boolean(metadata))
+    lineMetadata: []
   });
 }
 
@@ -1115,10 +1148,8 @@ function isActiveSettlementFee(fee: SettlementFeeRow) {
 }
 
 function getFulfillmentBucket(item: AuditOrderItem): "wfs" | "sellerFulfilled" | "unknown" {
-  const metadata = item.fees.map((fee) => toRecord(fee.metadata)).find(Boolean);
   const fulfillmentType = (
     getDirectPoFulfillmentType(item) ??
-    readMetadataText(metadata, "fulfillmentType") ??
     ""
   ).toLowerCase();
 

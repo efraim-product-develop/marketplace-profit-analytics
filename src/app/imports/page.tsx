@@ -7,6 +7,7 @@ import {
   Megaphone,
   PackageOpen,
   ReceiptText,
+  Truck,
   UploadCloud
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
@@ -47,6 +48,12 @@ const importOptions: Array<{
     title: "Walmart Connect ads",
     description: "Upload daily Item Performance reports for advertising spend.",
     icon: Megaphone
+  },
+  {
+    href: "/imports/seller-shipping",
+    title: "Seller fulfilled shipping",
+    description: "Enter monthly seller fulfilled shipping costs as marketplace-level P&L expenses.",
+    icon: Truck
   },
   {
     href: "/imports/inventory",

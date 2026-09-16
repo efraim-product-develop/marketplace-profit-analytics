@@ -17,7 +17,9 @@ export async function GET(request: Request) {
     dateRange: parsed.filters.dateRange,
     comparisonPeriod: parsed.filters.comparisonPeriod,
     marketplace: getCurrentMarketplace(),
-    parentSku: parsed.filters.parentSku
+    parentSku: parsed.filters.parentSku,
+    includeSkuRows: true,
+    includeMonthlyComparisonRows: true
   });
   const csv = buildParentPnlCsv(rows, skuRows, monthlyComparisonRows);
 

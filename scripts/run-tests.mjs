@@ -1,4 +1,5 @@
 await import("./test-effective-cogs.mjs");
+await import("./test-auth-cookie.mjs");
 await import("./test-settlement-period-allocator.mjs");
 await import("./test-settlement-commission-allocation.mjs");
 await import("./test-pnl-source-selection.mjs");

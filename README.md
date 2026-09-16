@@ -41,6 +41,9 @@ A local Next.js 14 TypeScript app for marketplace P&L analytics. The first conne
 
    - `DATABASE_URL`: app database connection.
    - `DIRECT_URL`: Prisma migration/CLI connection.
+   - `APP_LOGIN_EMAIL`: owner login email.
+   - `APP_LOGIN_PASSWORD`: owner login password.
+   - `AUTH_SECRET`: random secret used to sign the login cookie.
 
    For local Docker Postgres, both values can match `.env.example`. For Supabase,
    use the app/runtime connection for `DATABASE_URL` and the Supavisor Session
@@ -66,6 +69,26 @@ A local Next.js 14 TypeScript app for marketplace P&L analytics. The first conne
    ```
 
 6. Open `http://localhost:3000`.
+
+## App Login
+
+Hosted production deployments require a login before the P&L pages load. Set
+these values in `.env` locally and in Vercel Environment Variables when hosted:
+
+```env
+APP_LOGIN_EMAIL="you@example.com"
+APP_LOGIN_PASSWORD="use-a-strong-password"
+AUTH_SECRET="use-a-random-secret"
+```
+
+Generate `AUTH_SECRET` in PowerShell:
+
+```powershell
+powershell -NoProfile -Command "[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))"
+```
+
+In local development, if these values are missing, the app remains accessible so
+you do not get locked out while working.
 
 ## Visual Studio Code Workflow
 

@@ -5,6 +5,7 @@ dist
 coverage
 .pnpm-store
 .tmp
+.tmp-*
 .env
 .env.local
 .env.*.local

@@ -4,6 +4,7 @@ import type {
   ProfitFeeInput,
   ProfitRefundInput
 } from "./types.ts";
+import { isSellerFulfilledShippingFee } from "./seller-fulfilled-shipping-types.ts";
 
 const SELLER_CENTER_SEM_SOURCES = new Set(["walmart_seller_center_sem", "seller_center_sem"]);
 const WALMART_CONNECT_AD_SOURCE = "walmart_connect_item_performance";
@@ -44,7 +45,10 @@ export function buildProductAttributionDiagnostics({
   const productConnect = attributableAds.filter((cost) => cost.source === WALMART_CONNECT_AD_SOURCE);
   const sellerCenterSem = advertisingCosts.filter(isSellerCenterSemAdvertisingCost);
   const allOtherFees = feeAdjustments.filter(
-    (fee) => !isCommissionFee(fee) && !isFulfillmentFee(fee)
+    (fee) => !isCommissionFee(fee) && !isFulfillmentFee(fee) && !isSellerFulfilledShippingFee(fee.feeType, fee.metadata)
+  );
+  const sellerFulfilledShipping = feeAdjustments.filter((fee) =>
+    isSellerFulfilledShippingFee(fee.feeType, fee.metadata)
   );
   const attributableWalmartConnectAdvertising = sumAds(productConnect);
   const totalWalmartConnectAdvertising = sumAds(allConnect);
@@ -68,6 +72,7 @@ export function buildProductAttributionDiagnostics({
         unallocatedWalmartConnectAdvertising
     ),
     sellerCenterSemAdvertising: sumAds(sellerCenterSem),
+    sellerFulfilledShippingCost: sumFeeExpense(sellerFulfilledShipping),
     marketplaceOnlyOtherWalmartFees: sumFeeExpense(allOtherFees)
   };
 }

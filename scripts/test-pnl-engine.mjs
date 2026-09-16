@@ -33,6 +33,7 @@ const tests = [
       assert.equal(row.parentSku, "PARENT-SKU-1");
       assert.equal(row.walmartConnectAdvertisingCost, 12);
       assert.equal(row.advertisingCost, 12);
+      assert.equal(row.tacosPercent, 12);
       assert.equal(row.netProfit, 88);
     }
   },
@@ -80,6 +81,7 @@ const tests = [
       assert.equal(summary.walmartConnectAdvertisingCost, 12);
       assert.equal(summary.semAdvertisingCost, 3);
       assert.equal(summary.advertisingCost, 15);
+      assert.equal(summary.tacosPercent, 15);
       assert.equal(summary.netProfit, 85);
     }
   },
@@ -252,6 +254,7 @@ const tests = [
       assert.equal(row.grossRevenue, 100);
       assert.equal(row.salesRefunds, 20);
       assert.equal(row.netRevenue, 80);
+      assert.equal(row.tacosPercent, 12.5);
       assert.equal(row.netProfit, 23);
     }
   },
@@ -548,6 +551,36 @@ const tests = [
       assert.equal(row.grossProfit, -10);
       assert.equal(row.netProfit, -10);
       assert.equal(row.profitPerUnit, 0);
+    }
+  },
+  {
+    name: "tracks seller fulfilled shipping as a marketplace shipping cost outside other fees",
+    run() {
+      const rows = calculateProfitRows(
+        [],
+        "parentSku",
+        [],
+        [
+          {
+            marketplace: "walmart",
+            feeType: "seller_fulfilled_shipping",
+            amount: 125,
+            metadata: { source: "manual_seller_fulfilled_shipping" }
+          }
+        ]
+      );
+      const summary = summarizeProfit(rows);
+      const [row] = rows;
+
+      assert.equal(row.parentSku, "Unassigned parent");
+      assert.equal(row.marketplaceFees, 125);
+      assert.equal(row.sellerFulfilledShippingCost, 125);
+      assert.equal(row.shippingFees, 125);
+      assert.equal(row.otherFees, 0);
+      assert.deepEqual(row.otherFeeCategoryBreakdown, []);
+      assert.equal(row.netProfit, -125);
+      assert.equal(summary.sellerFulfilledShippingCost, 125);
+      assert.equal(summary.netProfit, -125);
     }
   },
   {

@@ -1188,27 +1188,27 @@ export function resolveSettlementFeeOrderLineMatches(
   feeRows: WalmartPaymentSettlementRow[],
   orderItems: SettlementFeePoLineLookupRow[]
 ) {
-  const orderItemsByPoLine = new Map<string, SettlementFeePoLineLookupRow[]>();
+  const orderItemsByPoSku = new Map<string, SettlementFeePoLineLookupRow[]>();
 
   for (const orderItem of orderItems) {
-    const poLineKey = buildPoLineMatchKey(
+    const poSkuKey = buildPoSkuMatchKey(
       orderItem.purchaseOrderNumber,
-      orderItem.purchaseOrderLineNumber
+      orderItem.sellerSku
     );
 
-    if (!poLineKey) {
+    if (!poSkuKey) {
       continue;
     }
 
-    const existing = orderItemsByPoLine.get(poLineKey) ?? [];
+    const existing = orderItemsByPoSku.get(poSkuKey) ?? [];
     existing.push(orderItem);
-    orderItemsByPoLine.set(poLineKey, existing);
+    orderItemsByPoSku.set(poSkuKey, existing);
   }
 
   return new Map(
     feeRows.map((row) => [
       row.duplicateKey,
-      resolveSettlementFeeCommitResolution(row, orderItemsByPoLine)
+      resolveSettlementFeeCommitResolution(row, orderItemsByPoSku)
     ])
   );
 }
@@ -1243,7 +1243,7 @@ function summarizeFeePoLineMatches(
 
 function resolveSettlementFeeCommitResolution(
   row: WalmartPaymentSettlementRow,
-  orderItemsByPoLine: Map<string, SettlementFeePoLineLookupRow[]>
+  orderItemsByPoSku: Map<string, SettlementFeePoLineLookupRow[]>
 ): SettlementFeeCommitResolution {
   if (!shouldLinkSettlementFeeToPoLine(row)) {
     return {
@@ -1257,13 +1257,13 @@ function resolveSettlementFeeCommitResolution(
     };
   }
 
-  const poLineKey = buildPoLineMatchKey(row.externalOrderId, row.externalLineId);
+  const poSkuKey = buildPoSkuMatchKey(row.externalOrderId, row.sellerSku);
 
-  if (!poLineKey) {
+  if (!poSkuKey) {
     return buildUnmatchedLinkableFeeResolution(row, "missing_reference");
   }
 
-  const matches = orderItemsByPoLine.get(poLineKey) ?? [];
+  const matches = orderItemsByPoSku.get(poSkuKey) ?? [];
 
   if (matches.length !== 1) {
     return buildUnmatchedLinkableFeeResolution(
@@ -1323,18 +1323,18 @@ function shouldLinkSettlementFeeToPoLine(row: WalmartPaymentSettlementRow) {
   return row.feeType === "commission" || row.feeType === "fulfillment_fee";
 }
 
-function buildPoLineMatchKey(
+function buildPoSkuMatchKey(
   purchaseOrderNumber: string | null | undefined,
-  purchaseOrderLineNumber: string | null | undefined
+  sellerSku: string | null | undefined
 ) {
   const orderNumber = purchaseOrderNumber?.trim().toLowerCase();
-  const lineNumber = purchaseOrderLineNumber?.trim().toLowerCase();
+  const sku = sellerSku?.trim().toLowerCase();
 
-  if (!orderNumber || !lineNumber) {
+  if (!orderNumber || !sku) {
     return null;
   }
 
-  return `${orderNumber}::${lineNumber}`;
+  return `${orderNumber}::${sku}`;
 }
 
 function resolveSettlementReportingDate({
