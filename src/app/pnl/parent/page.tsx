@@ -727,6 +727,7 @@ function ParentPnlControls({
         {rollingPeriods.map((option) => (
           <Link
             key={option.value}
+            prefetch={false}
             aria-current={formValues.period === option.value ? "page" : undefined}
             className={
               formValues.period === option.value
@@ -803,6 +804,7 @@ function ParentPnlControls({
           <Link
             className="grid h-10 place-items-center rounded-md border border-slate-200 px-4 text-sm font-semibold text-slate-600 transition hover:border-ocean hover:text-ocean"
             href="/pnl/parent"
+            prefetch={false}
           >
             Reset
           </Link>

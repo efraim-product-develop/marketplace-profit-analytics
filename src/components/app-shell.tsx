@@ -68,6 +68,7 @@ export function AppShell({
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch={false}
                   className={cn(
                     "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-ink",
                     active && "bg-ocean text-white hover:bg-ocean hover:text-white"
@@ -82,6 +83,7 @@ export function AppShell({
           <div className="border-t border-slate-200 p-4">
             <Link
               href="/logout"
+              prefetch={false}
               className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-ink"
             >
               <LogOut aria-hidden className="h-4 w-4" />
@@ -101,6 +103,7 @@ export function AppShell({
             />
             <Link
               href="/logout"
+              prefetch={false}
               aria-label="Sign out"
               title="Sign out"
               className="grid h-10 w-10 place-items-center rounded-md border border-slate-200 bg-white text-slate-600"
@@ -117,6 +120,7 @@ export function AppShell({
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch={false}
                   aria-label={item.label}
                   title={item.label}
                   className={cn(
@@ -137,6 +141,7 @@ export function AppShell({
           />
           <Link
             href="/logout"
+            prefetch={false}
             className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-ink"
           >
             <LogOut aria-hidden className="h-4 w-4" />

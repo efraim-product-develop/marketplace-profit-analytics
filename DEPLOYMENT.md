@@ -11,9 +11,8 @@ Use:
 - Supabase for Postgres.
 - GitHub as the connection between your local code and Vercel.
 
-Important: this app currently has no user login system. Do not publish a
-production URL publicly unless the Vercel deployment is protected or app
-authentication is added.
+The app has a single-owner login. Keep the login environment variables private
+and use a strong password and signing secret.
 
 ## Environment Variables
 
@@ -39,8 +38,13 @@ For Vercel/serverless runtime, prefer the Supabase transaction pooler for
 `DATABASE_URL`:
 
 ```text
-postgresql://postgres.PROJECT_REF:PASSWORD@POOLER_HOST:6543/postgres?pgbouncer=true&sslmode=require
+postgresql://postgres.PROJECT_REF:PASSWORD@POOLER_HOST:6543/postgres?pgbouncer=true&connection_limit=1&pool_timeout=20&sslmode=require
 ```
+
+Transaction mode is required for Vercel's serverless functions. The
+`connection_limit=1` guard prevents each warm function instance from opening a
+five-connection Prisma pool and exhausting the Supabase free-plan connection
+limit.
 
 For Prisma migrations and CLI work, use the Supabase session pooler for
 `DIRECT_URL`:
