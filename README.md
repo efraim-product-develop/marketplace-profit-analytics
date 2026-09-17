@@ -47,7 +47,7 @@ A local Next.js 14 TypeScript app for marketplace P&L analytics. The first conne
 
    For local Docker Postgres, both values can match `.env.example`. For a Vercel
    deployment, use the Supavisor Transaction pooler on port `6543` with
-   `pgbouncer=true&connection_limit=1` for `DATABASE_URL`. Use the Supavisor
+   `pgbouncer=true&connection_limit=5&pool_timeout=60` for `DATABASE_URL`. Use the Supavisor
    Session pooler on port `5432` for `DIRECT_URL` and Prisma migrations.
 
 3. Start PostgreSQL:
@@ -128,7 +128,7 @@ Useful VS Code commands:
 
 For Supabase, use the connection mode appropriate to the environment. Vercel's
 `DATABASE_URL` should use the Supavisor Transaction pooler on port `6543` with
-`pgbouncer=true&connection_limit=1`. Set `DIRECT_URL` to the Supavisor Session
+`pgbouncer=true&connection_limit=5&pool_timeout=60`. Set `DIRECT_URL` to the Supavisor Session
 pooler connection on port `5432` for Prisma migrations. Local development may
 also use the Session pooler. This avoids relying on the direct
 `db.PROJECT_REF.supabase.co` host, which may be unreachable from local Windows

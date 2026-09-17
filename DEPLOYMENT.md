@@ -38,13 +38,14 @@ For Vercel/serverless runtime, prefer the Supabase transaction pooler for
 `DATABASE_URL`:
 
 ```text
-postgresql://postgres.PROJECT_REF:PASSWORD@POOLER_HOST:6543/postgres?pgbouncer=true&connection_limit=1&pool_timeout=20&sslmode=require
+postgresql://postgres.PROJECT_REF:PASSWORD@POOLER_HOST:6543/postgres?pgbouncer=true&connection_limit=5&pool_timeout=60&sslmode=require
 ```
 
 Transaction mode is required for Vercel's serverless functions. The
-`connection_limit=1` guard prevents each warm function instance from opening a
-five-connection Prisma pool and exhausting the Supabase free-plan connection
-limit.
+`connection_limit=5` setting supports the P&L service's bounded parallel reads,
+while the transaction pooler prevents warm function instances from reserving
+dedicated database sessions. The longer pool timeout gives large reporting
+queries time to wait for one of those connections.
 
 For Prisma migrations and CLI work, use the Supabase session pooler for
 `DIRECT_URL`:

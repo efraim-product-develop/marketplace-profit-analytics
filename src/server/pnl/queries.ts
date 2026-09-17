@@ -2596,67 +2596,49 @@ async function getParentSkuOptions(
   organizationId: string,
   marketplace?: string
 ): Promise<ParentSkuFilterOption[]> {
-  const [products, listings, orderItems, costRecords, advertisingCosts] = await Promise.all([
-    prisma.product.findMany({
-      where: { organizationId, parentSku: { not: null } },
-      distinct: ["parentSku"],
-      select: { parentSku: true }
-    }),
-    prisma.listing.findMany({
-      where: {
-        organizationId,
-        ...(marketplace ? { marketplace } : {}),
-        parentSku: { not: null }
-      },
-      distinct: ["parentSku"],
-      select: { parentSku: true }
-    }),
-    prisma.salesOrderItem.findMany({
-      where: {
-        organizationId,
-        ...(marketplace ? { marketplace } : {}),
-        parentSku: { not: null }
-      },
-      distinct: ["parentSku"],
-      select: { parentSku: true }
-    }),
-    prisma.costRecord.findMany({
-      where: {
-        organizationId,
-        ...(marketplace ? { marketplace } : {}),
-        parentSku: { not: null }
-      },
-      distinct: ["parentSku"],
-      select: { parentSku: true }
-    }),
-    prisma.advertisingCost.findMany({
-      where: {
-        organizationId,
-        ...(marketplace ? { marketplace } : {}),
-        parentSku: { not: null }
-      },
-      distinct: ["parentSku"],
-      select: { parentSku: true }
-    })
-  ]);
-  const parentSkus = uniqueStrings([
-    ...products.map((row) => row.parentSku),
-    ...listings.map((row) => row.parentSku),
-    ...orderItems.map((row) => row.parentSku),
-    ...costRecords.map((row) => row.parentSku),
-    ...advertisingCosts.map((row) => row.parentSku)
-  ]);
-  const parentProducts = parentSkus.length
-    ? await prisma.product.findMany({
-        where: { organizationId, internalSku: { in: parentSkus } },
-        select: { internalSku: true, title: true }
-      })
-    : [];
-  const titleBySku = new Map(parentProducts.map((product) => [product.internalSku, product.title]));
+  const rows = await prisma.$queryRaw<Array<{ parentSku: string; title: string | null }>>(
+    Prisma.sql`
+      WITH "parentSkus" AS (
+        SELECT "parentSku"
+        FROM "Product"
+        WHERE "organizationId" = ${organizationId} AND "parentSku" IS NOT NULL
+        UNION
+        SELECT "parentSku"
+        FROM "Listing"
+        WHERE "organizationId" = ${organizationId}
+          AND "parentSku" IS NOT NULL
+          ${marketplace ? Prisma.sql`AND "marketplace" = ${marketplace}` : Prisma.empty}
+        UNION
+        SELECT "parentSku"
+        FROM "SalesOrderItem"
+        WHERE "organizationId" = ${organizationId}
+          AND "parentSku" IS NOT NULL
+          ${marketplace ? Prisma.sql`AND "marketplace" = ${marketplace}` : Prisma.empty}
+        UNION
+        SELECT "parentSku"
+        FROM "CostRecord"
+        WHERE "organizationId" = ${organizationId}
+          AND "parentSku" IS NOT NULL
+          ${marketplace ? Prisma.sql`AND "marketplace" = ${marketplace}` : Prisma.empty}
+        UNION
+        SELECT "parentSku"
+        FROM "AdvertisingCost"
+        WHERE "organizationId" = ${organizationId}
+          AND "parentSku" IS NOT NULL
+          ${marketplace ? Prisma.sql`AND "marketplace" = ${marketplace}` : Prisma.empty}
+      )
+      SELECT ps."parentSku", p."title"
+      FROM "parentSkus" ps
+      LEFT JOIN "Product" p
+        ON p."organizationId" = ${organizationId}
+        AND p."internalSku" = ps."parentSku"
+      ORDER BY ps."parentSku" ASC
+    `
+  );
 
-  return parentSkus.map((parentSku) => ({
+  return rows.map(({ parentSku, title }) => ({
     parentSku,
-    label: titleBySku.get(parentSku) ? `${parentSku} - ${titleBySku.get(parentSku)}` : parentSku
+    label: title ? `${parentSku} - ${title}` : parentSku
   }));
 }
 

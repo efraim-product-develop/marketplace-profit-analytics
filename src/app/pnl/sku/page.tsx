@@ -37,23 +37,18 @@ export default async function SkuPnlPage({
   const parsed = parseSkuPnlSearchParams(searchParams);
   const marketplace = getCurrentMarketplace();
   const marketplaceTitle = getCurrentMarketplaceTitleName();
-  const [
-    {
-      rows,
-      summary,
-      salesSource,
-      settlementAllocation,
-      attributionDiagnostics,
-      dataQuality,
-      diagnostic,
-      settlementCommissionDiagnostic,
-      orderDrilldownRows
-    },
-    filterOptions
-  ] = await Promise.all([
-    getSkuPnl({ ...parsed.filters, marketplace }, parsed.selectedSku),
-    getSkuPnlFilterOptions(marketplace)
-  ]);
+  const {
+    rows,
+    summary,
+    salesSource,
+    settlementAllocation,
+    attributionDiagnostics,
+    dataQuality,
+    diagnostic,
+    settlementCommissionDiagnostic,
+    orderDrilldownRows
+  } = await getSkuPnl({ ...parsed.filters, marketplace }, parsed.selectedSku);
+  const filterOptions = await getSkuPnlFilterOptions(marketplace);
   const currentQueryString = buildSkuPnlQueryString(parsed.formValues, {
     ...(parsed.selectedSku ? { sku: parsed.selectedSku } : {})
   });
